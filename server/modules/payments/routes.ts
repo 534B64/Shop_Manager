@@ -1,21 +1,14 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, sql, and, isNull } from 'drizzle-orm';
-import { db } from '../db/index.js';
-import { payments, jobs, customers, customerCredits } from '../db/schema/index.js';
+import { db } from '../../db/index.js';
+import { payments, jobs, customers, customerCredits } from '../../db/schema/index.js';
+import { creditBalanceCents } from './service.js';
 
 export const PAYMENT_METHODS = ['cash', 'check', 'card', 'credit', 'other'] as const;
 
 function csvEscape(v: unknown): string {
   const s = v == null ? '' : String(v);
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-export async function creditBalanceCents(customerId: number): Promise<number> {
-  const [row] = await db
-    .select({ total: sql<number>`coalesce(sum(${customerCredits.deltaCents}), 0)` })
-    .from(customerCredits)
-    .where(eq(customerCredits.customerId, customerId));
-  return row.total;
 }
 
 export async function paymentRoutes(app: FastifyInstance) {
