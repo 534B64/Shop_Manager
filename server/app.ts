@@ -1,7 +1,7 @@
 import Fastify, { type FastifyInstance } from 'fastify';
 import { runMigrations } from './db/index.js';
 import { materialRoutes } from './modules/materials/index.js';
-import { customerRoutes } from './routes/customers.js';
+import { customerRoutes } from './modules/customers/index.js';
 import { jobRoutes } from './modules/jobs/index.js';
 import { paymentRoutes } from './modules/payments/index.js';
 import { inventoryRoutes, categoryRoutes } from './modules/inventory/index.js';

@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { like, desc, eq, sql } from 'drizzle-orm';
-import { db } from '../db/index.js';
-import { customers, jobs, customerCredits, settings as settingsTable } from '../db/schema/index.js';
-import { creditBalanceCents } from '../modules/payments/index.js';
+import { db } from '../../db/index.js';
+import { customers, jobs, customerCredits, settings as settingsTable } from '../../db/schema/index.js';
+import { creditBalanceCents } from '../payments/index.js';
 
 export async function customerRoutes(app: FastifyInstance) {
   // List with last-purchase date; client flags accounts idle > 30 days.
