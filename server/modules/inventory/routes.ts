@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, isNull, and, isNotNull } from 'drizzle-orm';
-import { db } from '../db/index.js';
-import { inventoryItems, inventoryAdjustments, cycleCounts, materials, materialColors } from '../db/schema/index.js';
-import { availabilityCheck, acrossFromDims, type StockLineQuery, type StockResult } from '../../shared/stockCheck.js';
+import { db } from '../../db/index.js';
+import { inventoryItems, inventoryAdjustments, cycleCounts, materials, materialColors } from '../../db/schema/index.js';
+import { availabilityCheck, acrossFromDims, type StockLineQuery, type StockResult } from '../../../shared/stockCheck.js';
 
 const isUniqueViolation = (e: unknown): boolean =>
   e instanceof Error && /unique/i.test(e.message);
