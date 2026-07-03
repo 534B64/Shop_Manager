@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { settings } from '../db/schema.js';
+import { settings } from '../db/schema/index.js';
 import { DEFAULT_TAX_RATE_PCT, DEFAULT_UNIT_TYPES } from '../../shared/domain.js';
 
 async function getJson<T>(key: string, fallback: T): Promise<T> {

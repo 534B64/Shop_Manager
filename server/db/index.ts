@@ -4,7 +4,7 @@ import { migrate } from 'drizzle-orm/libsql/migrator';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as schema from './schema.js';
+import * as schema from './schema/index.js';
 
 // Single SQLite file — rides the NAS → cloud backup pipeline as-is.
 const dbPath = process.env.DB_PATH ?? './data/dp-erp.db';

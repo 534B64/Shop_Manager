@@ -1,9 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, like, sql, isNull, and, inArray } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { jobs, customers, materials, jobItems } from '../db/schema.js';
+import { jobs, customers, materials, jobItems } from '../db/schema/index.js';
 import { verifyUser } from './users.js';
-import { payments, settings } from '../db/schema.js';
+import { payments, settings } from '../db/schema/index.js';
 import { JOB_TYPES, DEFAULT_TAX_RATE_PCT, type JobStatus } from '../../shared/domain.js';
 import { canTransition } from '../../shared/statusFlow.js';
 import { combinedSuggestedCents, grandTotalCents, type VerifyLine } from '../../shared/priceVerify.js';

@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, sql, and, isNull } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { payments, jobs, customers, customerCredits } from '../db/schema.js';
+import { payments, jobs, customers, customerCredits } from '../db/schema/index.js';
 
 export const PAYMENT_METHODS = ['cash', 'check', 'card', 'credit', 'other'] as const;
 

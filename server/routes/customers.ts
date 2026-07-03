@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { like, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { customers, jobs, customerCredits, settings as settingsTable } from '../db/schema.js';
+import { customers, jobs, customerCredits, settings as settingsTable } from '../db/schema/index.js';
 import { creditBalanceCents } from './payments.js';
 
 export async function customerRoutes(app: FastifyInstance) {

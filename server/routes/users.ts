@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { users, settings } from '../db/schema.js';
+import { users, settings } from '../db/schema/index.js';
 
 // Plain-text passwords on purpose: this is a LAN shop tool gating actions,
 // not protecting secrets. Admin password gates account management.

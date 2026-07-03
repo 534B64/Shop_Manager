@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { materials, jobs, jobItems, materialColors } from '../db/schema.js';
+import { materials, jobs, jobItems, materialColors } from '../db/schema/index.js';
 import { PRICE_MODES } from '../../shared/domain.js';
 
 const materialBody = {

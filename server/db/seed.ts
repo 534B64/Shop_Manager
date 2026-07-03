@@ -1,7 +1,7 @@
 // Realistic dev seed data for Decals Plus.
 // Idempotent: materials only when the table is empty; sample jobs only when there are none.
 import { db, runMigrations } from './index.js';
-import { customers, materials, jobs } from './schema.js';
+import { customers, materials, jobs } from './schema/index.js';
 
 await runMigrations();
 

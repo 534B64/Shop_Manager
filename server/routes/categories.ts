@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db } from '../db/index.js';
-import { categories, categorySizes, categoryFields, inventoryItems, settings } from '../db/schema.js';
+import { categories, categorySizes, categoryFields, inventoryItems, settings } from '../db/schema/index.js';
 
 async function adminPassword(): Promise<string> {
   const [row] = await db.select().from(settings).where(eq(settings.key, 'adminPassword'));
