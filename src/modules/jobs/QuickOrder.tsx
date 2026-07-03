@@ -1,9 +1,9 @@
 // Counter sales: stock items out the door in two fields and a tap.
 import { useEffect, useState } from 'react';
-import { formatCents, parseDollarsToCents, formatDate } from '../lib/format';
-import { get, post } from '../lib/api';
-import { currentUser } from '../lib/session';
-import type { Customer } from '../lib/types';
+import { formatCents, parseDollarsToCents, formatDate } from '../../lib/format';
+import { get, post } from '../../lib/api';
+import { currentUser } from '../../lib/session';
+import type { Customer } from '../../lib/types';
 
 interface PaymentRow { id: number; amountCents: number; method: string; kind: string; voidedAt: string | null; createdAt: string; jobTitle: string | null; }
 const METHODS = ['cash', 'check', 'card', 'other'];

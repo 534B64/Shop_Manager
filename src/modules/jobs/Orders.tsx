@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react';
-import { STATUS_LABELS, JOB_TYPE_LABELS, type JobStatus } from '../../shared/domain';
-import { nextStatus, prevStatus } from '../../shared/statusFlow';
-import { formatCents, formatDate, parseDollarsToCents } from '../lib/format';
-import { get, put, post, del, api } from '../lib/api';
-import { currentUser } from '../lib/session';
-import CopyButton from '../components/CopyButton';
-import type { Job, JobItem } from '../lib/types';
+import { STATUS_LABELS, JOB_TYPE_LABELS, type JobStatus } from '../../../shared/domain';
+import { nextStatus, prevStatus } from '../../../shared/statusFlow';
+import { formatCents, formatDate, parseDollarsToCents } from '../../lib/format';
+import { get, put, post, del, api } from '../../lib/api';
+import { currentUser } from '../../lib/session';
+import CopyButton from '../../components/CopyButton';
+import type { Job, JobItem } from '../../lib/types';
 
 const PROOF_COLUMNS: JobStatus[] = ['quote', 'approved', 'design'];
 // The four steps are always visible, even when empty.

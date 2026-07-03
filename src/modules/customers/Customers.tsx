@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { STATUS_LABELS } from '../../shared/domain';
-import { formatCents, formatDate, parseDollarsToCents, formatPhone, isValidPhone, isValidEmail } from '../lib/format';
-import { get, post, put, del } from '../lib/api';
-import type { Customer, Job } from '../lib/types';
+import { STATUS_LABELS } from '../../../shared/domain';
+import { formatCents, formatDate, parseDollarsToCents, formatPhone, isValidPhone, isValidEmail } from '../../lib/format';
+import { get, post, put, del } from '../../lib/api';
+import type { Customer, Job } from '../../lib/types';
 
 interface CreditEntry { id: number; deltaCents: number; note: string | null; createdAt: string; }
 interface CustomerDetail extends Customer { creditCents: number; jobs: Job[]; creditLedger: CreditEntry[]; }

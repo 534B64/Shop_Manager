@@ -1,10 +1,10 @@
 import { useEffect, useMemo, useState } from 'react';
-import { get, post, put } from '../lib/api';
-import { currentUser } from '../lib/session';
-import { ROLL_SIZES } from '../../shared/domain';
-import { buildInventoryView } from '../../shared/inventoryView';
-import type { GroupBy, InvViewItem, SearchOp, SortBy } from '../../shared/inventoryView';
-import type { Category, CategorySize, InventoryItem, Material, MaterialColor } from '../lib/types';
+import { get, post, put } from '../../lib/api';
+import { currentUser } from '../../lib/session';
+import { ROLL_SIZES } from '../../../shared/domain';
+import { buildInventoryView } from '../../../shared/inventoryView';
+import type { GroupBy, InvViewItem, SearchOp, SortBy } from '../../../shared/inventoryView';
+import type { Category, CategorySize, InventoryItem, Material, MaterialColor } from '../../lib/types';
 
 interface CycleCount { id: number; scheduledFor: string; completedAt: string | null; }
 interface Adjustment { id: number; delta: number; reason: string; note: string | null; createdBy: string | null; createdAt: string; }

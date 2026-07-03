@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
-import { formatCents, parseDollarsToCents, formatDate } from '../lib/format';
-import { get, post } from '../lib/api';
-import { currentUser } from '../lib/session';
+import { formatCents, parseDollarsToCents, formatDate } from '../../lib/format';
+import { get, post } from '../../lib/api';
+import { currentUser } from '../../lib/session';
 
 interface Balance { jobId: number; title: string; status: string; customerName: string | null; finalPriceCents: number; paidCents: number; owedCents: number; }
 interface Summary { count: number; paymentsCents: number; refundsCents: number; netCents: number; byMethod: Record<string, number>; }

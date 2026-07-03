@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { JOB_TYPES, JOB_TYPE_LABELS, STATUS_LABELS, PRESET_TAGS, ROLL_SIZES, DEFAULT_TAX_RATE_PCT } from '../../shared/domain';
-import { suggestPrice } from '../../shared/pricing';
-import { autoRollWidth } from '../../shared/rolls';
-import { formatCents, parseDollarsToCents, formatDate, formatPhone, isValidPhone, isValidEmail } from '../lib/format';
-import { get, post, put } from '../lib/api';
-import { currentUser } from '../lib/session';
-import CopyButton from '../components/CopyButton';
-import type { Material, Customer, Job, JobItem, MaterialColor, StockResult } from '../lib/types';
+import { JOB_TYPES, JOB_TYPE_LABELS, STATUS_LABELS, PRESET_TAGS, ROLL_SIZES, DEFAULT_TAX_RATE_PCT } from '../../../shared/domain';
+import { suggestPrice } from '../../../shared/pricing';
+import { autoRollWidth } from '../../../shared/rolls';
+import { formatCents, parseDollarsToCents, formatDate, formatPhone, isValidPhone, isValidEmail } from '../../lib/format';
+import { get, post, put } from '../../lib/api';
+import { currentUser } from '../../lib/session';
+import CopyButton from '../../components/CopyButton';
+import type { Material, Customer, Job, JobItem, MaterialColor, StockResult } from '../../lib/types';
 
 const DRAFT_KEY = 'dp-erp-quote-draft';
 

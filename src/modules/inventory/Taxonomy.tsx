@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
-import { get, put, post, del } from '../lib/api';
-import { ui } from '../lib/ui';
-import AdminGate from '../components/AdminGate';
-import type { Category, CategorySize } from '../lib/types';
+import { get, put, post, del } from '../../lib/api';
+import { ui } from '../../lib/ui';
+import AdminGate from '../../components/AdminGate';
+import type { Category, CategorySize } from '../../lib/types';
 
 // Inventory taxonomy admin (units & smart categories). Moved out of Settings
 // into its own page (2026-07-02) — linked from Settings > Admin, the same way

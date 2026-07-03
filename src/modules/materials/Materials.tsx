@@ -1,10 +1,10 @@
 // Price book admin: every material's pricing rule is fully editable here.
 import { useEffect, useState } from 'react';
-import { MATERIAL_UNITS, PRICE_MODES, PRICE_MODE_LABELS, type PriceMode } from '../../shared/domain';
-import { formatCents, parseDollarsToCents } from '../lib/format';
-import { get, post, put, del } from '../lib/api';
-import type { Material } from '../lib/types';
-import AdminGate from '../components/AdminGate';
+import { MATERIAL_UNITS, PRICE_MODES, PRICE_MODE_LABELS, type PriceMode } from '../../../shared/domain';
+import { formatCents, parseDollarsToCents } from '../../lib/format';
+import { get, post, put, del } from '../../lib/api';
+import type { Material } from '../../lib/types';
+import AdminGate from '../../components/AdminGate';
 
 const input = 'px-3 py-2.5 bg-bg border border-line rounded-token text-base';
 const small = 'px-2 py-1.5 bg-bg border border-line rounded-token text-sm';
