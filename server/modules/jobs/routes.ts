@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, isNull, and } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { jobs, customers, materials, jobItems, settings } from '../../db/schema/index.js';
-import { verifyUser } from '../../routes/users.js';
+import { jobs, customers, materials, jobItems } from '../../db/schema/index.js';
+import { verifyUser } from '../users/index.js';
 import { paidNetCents, livePaymentCount } from '../payments/index.js';
+import { requireAdmin } from '../settings/index.js';
 import { JOB_TYPES, type JobStatus } from '../../../shared/domain.js';
 import { canTransition } from '../../../shared/statusFlow.js';
 import { baseQuery } from './queries.js';
@@ -222,8 +223,7 @@ export async function jobRoutes(app: FastifyInstance) {
       const owed = (job.totalCents ?? job.finalPriceCents ?? 0) - paidNet;
       if (owed > 0) {
         const { adminPassword: ap, overrideBy } = req.body as { adminPassword?: string; overrideBy?: string };
-        const [pwRow] = await db.select().from(settings).where(eq(settings.key, 'adminPassword'));
-        if (ap !== (pwRow?.value ?? 'admin')) {
+        if (!(await requireAdmin(ap))) {
           return reply.code(402).send({ error: `Balance due: $${(owed / 100).toFixed(2)}. Admin override required.` });
         }
         // Attributable audit line — appended to the job's notes so it's visible

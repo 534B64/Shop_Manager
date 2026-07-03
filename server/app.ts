@@ -5,8 +5,8 @@ import { customerRoutes } from './modules/customers/index.js';
 import { jobRoutes } from './modules/jobs/index.js';
 import { paymentRoutes } from './modules/payments/index.js';
 import { inventoryRoutes, categoryRoutes } from './modules/inventory/index.js';
-import { settingsRoutes } from './routes/settings.js';
-import { userRoutes } from './routes/users.js';
+import { settingsRoutes } from './modules/settings/index.js';
+import { userRoutes } from './modules/users/index.js';
 
 /**
  * Build the API with all routes registered, run migrations, but do NOT listen.

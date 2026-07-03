@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { db } from '../db/index.js';
-import { settings } from '../db/schema/index.js';
-import { DEFAULT_TAX_RATE_PCT, DEFAULT_UNIT_TYPES } from '../../shared/domain.js';
+import { db } from '../../db/index.js';
+import { settings } from '../../db/schema/index.js';
+import { DEFAULT_UNIT_TYPES } from '../../../shared/domain.js';
+import { taxRatePct } from './service.js';
 
 async function getJson<T>(key: string, fallback: T): Promise<T> {
   const [row] = await db.select().from(settings).where(eq(settings.key, key));
@@ -20,10 +21,7 @@ export const DEFAULT_LEVEL_DISCOUNTS = { 1: 5, 2: 10, 3: 15 } as Record<string, 
 
 export async function settingsRoutes(app: FastifyInstance) {
   // Sales tax — default 8.25%, totals default to tax ON.
-  app.get('/api/settings/tax', async () => {
-    const [row] = await db.select().from(settings).where(eq(settings.key, 'taxRatePct'));
-    return { ratePct: row ? Number(row.value) : DEFAULT_TAX_RATE_PCT };
-  });
+  app.get('/api/settings/tax', async () => ({ ratePct: await taxRatePct() }));
   app.put('/api/settings/tax', {
     schema: { body: { type: 'object', required: ['ratePct'], additionalProperties: false,
       properties: { ratePct: { type: 'number', minimum: 0, maximum: 30 } } } },

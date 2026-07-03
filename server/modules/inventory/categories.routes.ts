@@ -1,12 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { categories, categorySizes, categoryFields, inventoryItems, settings } from '../../db/schema/index.js';
-
-async function adminPassword(): Promise<string> {
-  const [row] = await db.select().from(settings).where(eq(settings.key, 'adminPassword'));
-  return row?.value ?? 'admin';
-}
+import { categories, categorySizes, categoryFields, inventoryItems } from '../../db/schema/index.js';
+import { requireAdmin } from '../settings/index.js';
 
 // ---- Smart categories (Phase 10, Slice 2) ----
 // ORTHOGONAL to the roll-SKU/estimator path: categories are a new
@@ -72,7 +68,7 @@ export async function categoryRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const { adminPassword: ap } = req.body as { adminPassword: string };
-    if (ap !== (await adminPassword())) return reply.code(401).send({ error: 'Admin password required' });
+    if (!(await requireAdmin(ap))) return reply.code(401).send({ error: 'Admin password required' });
     await db.update(inventoryItems).set({ categoryId: null }).where(eq(inventoryItems.categoryId, id));
     await db.delete(categorySizes).where(eq(categorySizes.categoryId, id));
     await db.delete(categoryFields).where(eq(categoryFields.categoryId, id));

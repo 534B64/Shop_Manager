@@ -1,8 +1,9 @@
 import type { FastifyInstance } from 'fastify';
 import { like, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { customers, jobs, customerCredits, settings as settingsTable } from '../../db/schema/index.js';
+import { customers, jobs, customerCredits } from '../../db/schema/index.js';
 import { creditBalanceCents } from '../payments/index.js';
+import { requireAdmin } from '../settings/index.js';
 
 export async function customerRoutes(app: FastifyInstance) {
   // List with last-purchase date; client flags accounts idle > 30 days.
@@ -94,8 +95,7 @@ export async function customerRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const { level, adminPassword } = req.body as { level: number; adminPassword: string };
-    const [pwRow] = await db.select().from(settingsTable).where(eq(settingsTable.key, 'adminPassword'));
-    if (adminPassword !== (pwRow?.value ?? 'admin')) return reply.code(401).send({ error: 'Admin password required' });
+    if (!(await requireAdmin(adminPassword))) return reply.code(401).send({ error: 'Admin password required' });
     const [row] = await db.update(customers).set({ level }).where(eq(customers.id, id)).returning();
     if (!row) return reply.code(404).send({ error: 'Customer not found' });
     return row;
@@ -110,8 +110,7 @@ export async function customerRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const { adminPassword } = req.body as { adminPassword: string };
-    const [pwRow] = await db.select().from(settingsTable).where(eq(settingsTable.key, 'adminPassword'));
-    if (adminPassword !== (pwRow?.value ?? 'admin')) return reply.code(401).send({ error: 'Admin password required' });
+    if (!(await requireAdmin(adminPassword))) return reply.code(401).send({ error: 'Admin password required' });
     const [jobRef] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.customerId, id)).limit(1);
     if (jobRef) return reply.code(409).send({ error: 'This customer has order history — it cannot be removed (the books stay intact).' });
     await db.delete(customerCredits).where(eq(customerCredits.customerId, id));

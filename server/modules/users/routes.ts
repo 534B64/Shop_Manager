@@ -1,21 +1,12 @@
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { db } from '../db/index.js';
-import { users, settings } from '../db/schema/index.js';
+import { db } from '../../db/index.js';
+import { users } from '../../db/schema/index.js';
+import { getSetting, setSetting, requireAdmin } from '../settings/index.js';
+import { verifyUser } from './service.js';
 
 // Plain-text passwords on purpose: this is a LAN shop tool gating actions,
 // not protecting secrets. Admin password gates account management.
-
-async function adminPassword(): Promise<string> {
-  const [row] = await db.select().from(settings).where(eq(settings.key, 'adminPassword'));
-  return row?.value ?? 'admin';
-}
-
-export async function verifyUser(name: string, password: string): Promise<boolean> {
-  const [u] = await db.select().from(users).where(eq(users.name, name));
-  if (!u || !u.active) return false;
-  return (u.password ?? '') === password;
-}
 
 export async function userRoutes(app: FastifyInstance) {
   app.get('/api/users', async () => {
@@ -56,7 +47,7 @@ export async function userRoutes(app: FastifyInstance) {
       } } },
   }, async (req, reply) => {
     const { name, password, adminPassword: ap } = req.body as { name: string; password: string; adminPassword: string };
-    if (ap !== (await adminPassword())) return reply.code(401).send({ error: 'Admin password required' });
+    if (!(await requireAdmin(ap))) return reply.code(401).send({ error: 'Admin password required' });
     const [existing] = await db.select().from(users).where(eq(users.name, name));
     if (existing) {
       const [row] = await db.update(users).set({ active: true, password }).where(eq(users.id, existing.id)).returning();
@@ -72,7 +63,7 @@ export async function userRoutes(app: FastifyInstance) {
       properties: { adminPassword: { type: 'string' } } } },
   }, async (req, reply) => {
     const { adminPassword: ap } = req.body as { adminPassword: string };
-    if (ap !== (await adminPassword())) return reply.code(401).send({ error: 'Admin password required' });
+    if (!(await requireAdmin(ap))) return reply.code(401).send({ error: 'Admin password required' });
     const id = Number((req.params as { id: string }).id);
     const [row] = await db.update(users).set({ active: false }).where(eq(users.id, id)).returning();
     if (!row) return reply.code(404).send({ error: 'User not found' });
@@ -82,7 +73,7 @@ export async function userRoutes(app: FastifyInstance) {
   // Non-blocking trust check: is the admin password still the default 'admin'?
   // Drives a persistent banner urging a change. Never exposes the password.
   app.get('/api/admin/status', async () => {
-    return { isDefault: (await adminPassword()) === 'admin' };
+    return { isDefault: ((await getSetting('adminPassword')) ?? 'admin') === 'admin' };
   });
 
   app.post('/api/admin/login', {
@@ -90,7 +81,7 @@ export async function userRoutes(app: FastifyInstance) {
       properties: { password: { type: 'string', maxLength: 100 } } } },
   }, async (req, reply) => {
     const { password } = req.body as { password: string };
-    if (password !== (await adminPassword())) return reply.code(401).send({ error: 'Wrong password' });
+    if (!(await requireAdmin(password))) return reply.code(401).send({ error: 'Wrong password' });
     return { ok: true };
   });
 
@@ -99,10 +90,8 @@ export async function userRoutes(app: FastifyInstance) {
       properties: { current: { type: 'string', maxLength: 100 }, next: { type: 'string', minLength: 3, maxLength: 100 } } } },
   }, async (req, reply) => {
     const { current, next } = req.body as { current: string; next: string };
-    if (current !== (await adminPassword())) return reply.code(401).send({ error: 'Wrong current password' });
-    const [row] = await db.select().from(settings).where(eq(settings.key, 'adminPassword'));
-    if (row) await db.update(settings).set({ value: next }).where(eq(settings.key, 'adminPassword'));
-    else await db.insert(settings).values({ key: 'adminPassword', value: next });
+    if (!(await requireAdmin(current))) return reply.code(401).send({ error: 'Wrong current password' });
+    await setSetting('adminPassword', next);
     return { ok: true };
   });
 }

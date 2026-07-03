@@ -2,8 +2,8 @@
 // verification. Routes stay HTTP-only; this is where the rules live.
 import { eq, sql, like, inArray } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { jobs, materials, settings } from '../../db/schema/index.js';
-import { DEFAULT_TAX_RATE_PCT } from '../../../shared/domain.js';
+import { jobs, materials } from '../../db/schema/index.js';
+import { taxRatePct } from '../settings/index.js';
 import { combinedSuggestedCents, grandTotalCents, type VerifyLine } from '../../../shared/priceVerify.js';
 
 // ---- PO generation ----
@@ -41,14 +41,8 @@ export interface PriceCheck {
   clientTotalCents: number | null;
 }
 
-async function pricingContext(): Promise<{ taxRatePct: number }> {
-  const [taxRow] = await db.select().from(settings).where(eq(settings.key, 'taxRatePct'));
-  const taxRatePct = taxRow ? Number(taxRow.value) : DEFAULT_TAX_RATE_PCT;
-  return { taxRatePct };
-}
-
 export async function verifyQuoteMath(input: VerifyInput): Promise<{ suggestedCents: number | null; totalCents: number; priceCheck: PriceCheck }> {
-  const { taxRatePct } = await pricingContext();
+  const taxRate = await taxRatePct();
   const ids = [...new Set([input.materialId, ...(input.items ?? []).map((i) => i.materialId)]
     .filter((x): x is number => typeof x === 'number'))];
   const mats = ids.length ? await db.select().from(materials).where(inArray(materials.id, ids)) : [];
@@ -63,7 +57,7 @@ export async function verifyQuoteMath(input: VerifyInput): Promise<{ suggestedCe
     })),
   ];
   const suggestedCents = combinedSuggestedCents(lines);
-  const totalCents = grandTotalCents(input.finalPriceCents, input.taxable, taxRatePct, input.discountPct ?? 0);
+  const totalCents = grandTotalCents(input.finalPriceCents, input.taxable, taxRate, input.discountPct ?? 0);
   const suggestedMatch = input.clientSuggestedCents == null || suggestedCents == null
     || suggestedCents === input.clientSuggestedCents;
   const totalMatch = input.clientTotalCents == null || totalCents === input.clientTotalCents;
