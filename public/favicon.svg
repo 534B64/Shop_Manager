@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#2456c4"/>
+      <stop offset="1" stop-color="#163a8f"/>
+    </linearGradient>
+  </defs>
+  <!-- Rounded plate -->
+  <rect x="2" y="2" width="60" height="60" rx="14" fill="url(#g)"/>
+  <!-- Peeling decal corner -->
+  <path d="M62 38 L62 48 Q62 62 48 62 L38 62 Z" fill="#ffffff" opacity="0.22"/>
+  <path d="M62 38 L50 50 L62 50 Z" fill="#ffffff" opacity="0.45"/>
+  <!-- DP monogram -->
+  <text x="31" y="42" font-family="Segoe UI, Arial, sans-serif" font-size="27" font-weight="700"
+        fill="#ffffff" text-anchor="middle" letter-spacing="-1">DP</text>
+</svg>

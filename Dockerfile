@@ -1,0 +1,25 @@
+# Build stage: compile the client bundle.
+FROM node:20-slim AS build
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build
+
+# Runtime stage: prod deps + built client + TS server (run via tsx).
+FROM node:20-slim
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package*.json ./
+RUN npm ci --omit=dev
+COPY --from=build /app/dist ./dist
+COPY server ./server
+COPY shared ./shared
+COPY tsconfig.json ./
+
+# SQLite lives here — map this to a NAS folder that's in the cloud-backup pipeline.
+VOLUME /app/data
+ENV DB_PATH=/app/data/dp-erp.db
+
+EXPOSE 3000
+CMD ["npx", "tsx", "server/index.ts"]

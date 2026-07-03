@@ -1,0 +1,9 @@
+services:
+  dp-erp:
+    build: .
+    ports:
+      - '3000:3000'
+    volumes:
+      # Put ./data inside the NAS share that already backs up to the cloud.
+      - ./data:/app/data
+    restart: unless-stopped
