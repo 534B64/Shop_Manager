@@ -2,4 +2,4 @@
 // modules are allowed to use. Nothing outside this folder imports
 // routes.ts/service.ts directly.
 export { paymentRoutes, PAYMENT_METHODS } from './routes.js';
-export { creditBalanceCents, paidNetCents } from './service.js';
+export { creditBalanceCents, paidNetCents, livePaymentCount } from './service.js';

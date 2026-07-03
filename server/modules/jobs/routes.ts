@@ -1,52 +1,13 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, desc, like, sql, isNull, and, inArray } from 'drizzle-orm';
-import { db } from '../db/index.js';
-import { jobs, customers, materials, jobItems } from '../db/schema/index.js';
-import { verifyUser } from './users.js';
-import { payments, settings } from '../db/schema/index.js';
-import { JOB_TYPES, DEFAULT_TAX_RATE_PCT, type JobStatus } from '../../shared/domain.js';
-import { canTransition } from '../../shared/statusFlow.js';
-import { combinedSuggestedCents, grandTotalCents, type VerifyLine } from '../../shared/priceVerify.js';
-
-const jobSelect = {
-  id: jobs.id,
-  clientRef: jobs.clientRef,
-  customerId: jobs.customerId,
-  po: jobs.po,
-  tags: jobs.tags,
-  fileRef: jobs.fileRef,
-  createdBy: jobs.createdBy,
-  rollWidthIn: jobs.rollWidthIn,
-  customerName: customers.name,
-  customerPhone: customers.phone,
-  type: jobs.type,
-  title: jobs.title,
-  status: jobs.status,
-  useProofFlow: jobs.useProofFlow,
-  dueDate: jobs.dueDate,
-  quantity: jobs.quantity,
-  widthIn: jobs.widthIn,
-  heightIn: jobs.heightIn,
-  mainColorMult: jobs.mainColorMult,
-  materialId: jobs.materialId,
-  materialName: materials.name,
-  materialCostSnapshotCents: jobs.materialCostSnapshotCents,
-  taxable: jobs.taxable,
-  discountPct: jobs.discountPct,
-  totalCents: jobs.totalCents,
-  suggestedPriceCents: jobs.suggestedPriceCents,
-  finalPriceCents: jobs.finalPriceCents,
-  notes: jobs.notes,
-  createdAt: jobs.createdAt,
-};
-
-function baseQuery() {
-  return db
-    .select(jobSelect)
-    .from(jobs)
-    .leftJoin(customers, eq(jobs.customerId, customers.id))
-    .leftJoin(materials, eq(jobs.materialId, materials.id));
-}
+import { eq, desc, isNull, and } from 'drizzle-orm';
+import { db } from '../../db/index.js';
+import { jobs, customers, materials, jobItems, settings } from '../../db/schema/index.js';
+import { verifyUser } from '../../routes/users.js';
+import { paidNetCents, livePaymentCount } from '../payments/index.js';
+import { JOB_TYPES, type JobStatus } from '../../../shared/domain.js';
+import { canTransition } from '../../../shared/statusFlow.js';
+import { baseQuery } from './queries.js';
+import { generatePo, verifyQuoteMath, type PriceCheck, type VerifyItemInput } from './service.js';
 
 const createBody = {
   type: 'object',
@@ -131,69 +92,6 @@ interface CreateJobBody {
   notes?: string;
 }
 
-// ---- Server-side quote-math verification (Phase 11 hardening) ----
-// The client computes the suggested total and grand total in the browser; the
-// server now recomputes both from its own settings + material rules and stores
-// its own answer. A mismatch (stale tab, old tax rate) is returned as a
-// non-blocking `priceCheck` warning — the human-set finalPriceCents is never
-// second-guessed.
-interface VerifyItemInput {
-  materialId?: number | null; widthIn?: number | null; heightIn?: number | null;
-  qty: number; colorMult?: number | null;
-}
-interface VerifyInput {
-  materialId?: number | null; widthIn?: number | null; heightIn?: number | null;
-  quantity?: number | null; mainColorMult?: number | null;
-  items?: VerifyItemInput[];
-  finalPriceCents: number; taxable: boolean; discountPct?: number | null;
-  clientSuggestedCents?: number | null; clientTotalCents?: number | null;
-}
-export interface PriceCheck {
-  verified: boolean;
-  serverSuggestedCents: number | null;
-  clientSuggestedCents: number | null;
-  serverTotalCents: number;
-  clientTotalCents: number | null;
-}
-
-async function pricingContext(): Promise<{ taxRatePct: number }> {
-  const [taxRow] = await db.select().from(settings).where(eq(settings.key, 'taxRatePct'));
-  const taxRatePct = taxRow ? Number(taxRow.value) : DEFAULT_TAX_RATE_PCT;
-  return { taxRatePct };
-}
-
-async function verifyQuoteMath(input: VerifyInput): Promise<{ suggestedCents: number | null; totalCents: number; priceCheck: PriceCheck }> {
-  const { taxRatePct } = await pricingContext();
-  const ids = [...new Set([input.materialId, ...(input.items ?? []).map((i) => i.materialId)]
-    .filter((x): x is number => typeof x === 'number'))];
-  const mats = ids.length ? await db.select().from(materials).where(inArray(materials.id, ids)) : [];
-  const ruleFor = (id?: number | null) => mats.find((m) => m.id === id) ?? null;
-
-  const lines: VerifyLine[] = [
-    { rule: ruleFor(input.materialId), widthIn: input.widthIn, heightIn: input.heightIn,
-      qty: input.quantity ?? 1, colorMult: input.mainColorMult },
-    ...(input.items ?? []).map((it) => ({
-      rule: ruleFor(it.materialId), widthIn: it.widthIn, heightIn: it.heightIn,
-      qty: it.qty || 1, colorMult: it.colorMult,
-    })),
-  ];
-  const suggestedCents = combinedSuggestedCents(lines);
-  const totalCents = grandTotalCents(input.finalPriceCents, input.taxable, taxRatePct, input.discountPct ?? 0);
-  const suggestedMatch = input.clientSuggestedCents == null || suggestedCents == null
-    || suggestedCents === input.clientSuggestedCents;
-  const totalMatch = input.clientTotalCents == null || totalCents === input.clientTotalCents;
-  return {
-    suggestedCents, totalCents,
-    priceCheck: {
-      verified: suggestedMatch && totalMatch,
-      serverSuggestedCents: suggestedCents,
-      clientSuggestedCents: input.clientSuggestedCents ?? null,
-      serverTotalCents: totalCents,
-      clientTotalCents: input.clientTotalCents ?? null,
-    },
-  };
-}
-
 export async function jobRoutes(app: FastifyInstance) {
   app.get('/api/jobs', async (req) => {
     const { status, limit, q } = req.query as { status?: string; limit?: string; q?: string };
@@ -225,12 +123,7 @@ export async function jobRoutes(app: FastifyInstance) {
     const [existing] = await baseQuery().where(eq(jobs.clientRef, body.clientRef)).limit(1);
     if (existing) return existing;
 
-    // PO: MMDDYY + 3-digit daily sequence (e.g. order 35 on 06/12/26 → 061226035).
-    const d = new Date();
-    const day = String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + String(d.getFullYear()).slice(2);
-    const [{ n }] = await db.select({ n: sql<number>`count(*)` }).from(jobs)
-      .where(like(jobs.po, `${day}%`));
-    const po = `${day}${String(n + 1).padStart(3, '0')}`;
+    const po = await generatePo();
 
     let customerId = body.customerId ?? null;
     if (!customerId && body.newCustomer) {
@@ -325,9 +218,8 @@ export async function jobRoutes(app: FastifyInstance) {
     const patch: Record<string, unknown> = { status: to };
     // No pickup without payment — unless an admin overrides.
     if (to === 'picked_up') {
-      const [paid] = await db.select({ net: sql<number>`coalesce(sum(case when ${payments.kind} = 'refund' then -${payments.amountCents} else ${payments.amountCents} end), 0)` })
-        .from(payments).where(and(eq(payments.jobId, id), isNull(payments.voidedAt)));
-      const owed = (job.totalCents ?? job.finalPriceCents ?? 0) - paid.net;
+      const paidNet = await paidNetCents(id);
+      const owed = (job.totalCents ?? job.finalPriceCents ?? 0) - paidNet;
       if (owed > 0) {
         const { adminPassword: ap, overrideBy } = req.body as { adminPassword?: string; overrideBy?: string };
         const [pwRow] = await db.select().from(settings).where(eq(settings.key, 'adminPassword'));
@@ -428,9 +320,7 @@ export async function jobRoutes(app: FastifyInstance) {
     if (!job || job.deletedAt) return reply.code(404).send({ error: 'Job not found' });
     // Removable only while no money has been taken. Once a live (non-voided)
     // payment exists, the order is corrected by voiding/refunding — never deleted.
-    const [paid] = await db.select({ n: sql<number>`count(*)` }).from(payments)
-      .where(and(eq(payments.jobId, id), isNull(payments.voidedAt)));
-    if (paid.n > 0) return reply.code(409).send({ error: 'This order has payments — void or refund them first, then remove.' });
+    if ((await livePaymentCount(id)) > 0) return reply.code(409).send({ error: 'This order has payments — void or refund them first, then remove.' });
     await db.update(jobs).set({ deletedAt: new Date().toISOString() }).where(eq(jobs.id, id));
     return { ok: true };
   });

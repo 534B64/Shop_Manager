@@ -21,3 +21,13 @@ export async function paidNetCents(jobId: number): Promise<number> {
     .where(and(eq(payments.jobId, jobId), isNull(payments.voidedAt)));
   return row.net;
 }
+
+/** Live (non-voided) payment/refund row count for a job. Used by the
+ *  jobs module's removal rule: any live money row blocks a soft delete. */
+export async function livePaymentCount(jobId: number): Promise<number> {
+  const [row] = await db
+    .select({ n: sql<number>`count(*)` })
+    .from(payments)
+    .where(and(eq(payments.jobId, jobId), isNull(payments.voidedAt)));
+  return row.n;
+}
