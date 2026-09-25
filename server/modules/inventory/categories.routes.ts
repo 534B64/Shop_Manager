@@ -49,7 +49,8 @@ export async function categoryRoutes(app: FastifyInstance) {
         name: { type: 'string', minLength: 1, maxLength: 120 },
         defaultUnit: { type: ['string', 'null'], maxLength: 24 },
         tracksColor: { type: 'boolean' },
-        defaultVendor: { type: ['string', 'null'], maxLength: 120 },
+        defaultVendor: { type: ['string', 'null'], maxLength: 120 }, // legacy — UI writes defaultSupplierId now
+        defaultSupplierId: { type: ['integer', 'null'] },
         active: { type: 'boolean' },
       } } },
   }, async (req, reply) => {

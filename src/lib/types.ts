@@ -40,11 +40,20 @@ export interface InventoryItem {
   // Inventory taxonomy (Phase 10, Slice 2) — ORTHOGONAL to the roll-SKU fields
   // above. A smart category layer that sits on every item, roll SKUs included.
   categoryId?: number | null; sizeText?: string | null; custom?: string | null; orderNote?: string | null;
+  // Inventory management pass (2026-07-07): preferred supplier, UOM
+  // (purchase unit / count unit / count-units-per-purchase-unit), Max
+  // (reorder-up-to), and the count-derived rolling usage rate.
+  supplierId?: number | null; purchaseUnit?: string | null; countUnit?: string | null;
+  purchaseToCountFactor?: number; reorderMaxQty?: number | null; avgDailyUse?: number | null;
+}
+export interface Supplier {
+  id: number; name: string; leadTimeDays: number; contact: string | null;
+  notes: string | null; active: boolean;
 }
 export interface MaterialColor { id: number; materialId: number; name: string; }
 export interface Category {
   id: number; name: string; defaultUnit: string | null; tracksColor: boolean;
-  defaultVendor: string | null; active: boolean; sort: number;
+  defaultVendor: string | null; defaultSupplierId: number | null; active: boolean; sort: number;
 }
 export interface CategorySize { id: number; categoryId: number; label: string; sort: number; }
 // Advisory stock-check result for the estimator (Phase 8).

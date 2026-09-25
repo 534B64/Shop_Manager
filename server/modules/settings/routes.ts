@@ -55,6 +55,25 @@ export async function settingsRoutes(app: FastifyInstance) {
     return { units: deduped };
   });
 
+  // Inventory management knobs (2026-07-07): the cycle-count variance
+  // threshold (a variance flags when it beats EITHER the % or the flat-unit
+  // limit) and the reorder buffer days added on top of supplier lead time in
+  // the AUTO Min suggestion. Defaults live in modules/inventory/service.ts.
+  app.get('/api/settings/inventory', async () =>
+    getJson('inventorySettings', { pctThreshold: 5, unitThreshold: 5, reorderBufferDays: 3 }));
+  app.put('/api/settings/inventory', {
+    schema: { body: { type: 'object', additionalProperties: false, minProperties: 1,
+      properties: {
+        pctThreshold: { type: 'number', minimum: 0, maximum: 100 },
+        unitThreshold: { type: 'number', minimum: 0 },
+        reorderBufferDays: { type: 'number', minimum: 0, maximum: 60 },
+      } } },
+  }, async (req) => {
+    const next = { ...(await getJson('inventorySettings', { pctThreshold: 5, unitThreshold: 5, reorderBufferDays: 3 })), ...(req.body as object) };
+    await setJson('inventorySettings', next);
+    return next;
+  });
+
   // Discount % per customer level (1–3). Level 0 never sees discounts.
   app.get('/api/settings/levels', async () => getJson('levelDiscounts', DEFAULT_LEVEL_DISCOUNTS));
   app.put('/api/settings/levels', {

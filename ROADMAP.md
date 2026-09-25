@@ -32,6 +32,15 @@ file-upload reversal, cycle-count auto-reschedule, an admin-override audit
 trail, and inventory integration-test coverage). See `HANDOFF.md` for full
 current-state context. See `TASKS.md` for the live checklist.
 
+**Update (2026-07-09):** Phase 12 — full inventory management — shipped in one
+pass (suppliers + lead time, UOM, blind cycle-count v2 with variance reason
+codes, Min/Max + AUTO reorder point, receiving with per-receipt cost history,
+counter-sale deduction on Quick Order, valuation/cost/variance reports).
+Migration `0012`, 147 tests. Weekly-count-as-reconciler principle preserved —
+still no production-consumption tracking. The drills remain the critical path;
+the roll-SKU seed should now also load supplier/UOM. See `TASKS.md` Phase 12
+and the devlog entry.
+
 **Update (2026-07-01):** The triage batch shipped. Done: server-side
 quote-math verification (the critique's top finding — the server now
 recomputes and stores suggested + grand totals, warning on stale-client

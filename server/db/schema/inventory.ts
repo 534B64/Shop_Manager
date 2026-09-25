@@ -1,6 +1,22 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
 import { nowIso } from './common.js';
 import { materials } from './materials.js';
+
+// ---- Suppliers (inventory management pass, 2026-07-07) ----
+// Replaces the free-text `vendor` strings as the source of truth. leadTimeDays
+// feeds the reorder-point suggestion (avg daily use × lead time + buffer).
+// Migration 0012 backfilled one supplier per distinct vendor string; the old
+// vendor/default_vendor text columns remain in the DB for history but the UI
+// no longer writes them.
+export const suppliers = sqliteTable('suppliers', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  leadTimeDays: integer('lead_time_days').notNull().default(7),
+  contact: text('contact'), // phone / email / rep — free text, one line
+  notes: text('notes'),
+  active: integer('active', { mode: 'boolean' }).notNull().default(true),
+  createdAt: text('created_at').notNull().$defaultFn(nowIso),
+});
 
 // ---- Inventory taxonomy (Phase 10, Slice 2) ----
 // Smart categories are ORTHOGONAL to the roll-SKU/estimator path: they never
@@ -13,7 +29,8 @@ export const categories = sqliteTable('categories', {
   name: text('name').notNull(),
   defaultUnit: text('default_unit'),
   tracksColor: integer('tracks_color', { mode: 'boolean' }).notNull().default(false),
-  defaultVendor: text('default_vendor'),
+  defaultVendor: text('default_vendor'), // legacy free text — superseded by defaultSupplierId
+  defaultSupplierId: integer('default_supplier_id').references(() => suppliers.id),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   sort: integer('sort').notNull().default(0),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
@@ -69,6 +86,23 @@ export const inventoryItems = sqliteTable('inventory_items', {
   sizeText: text('size_text'),
   custom: text('custom'),
   orderNote: text('order_note'),
+  // ---- Inventory management pass (2026-07-07) ----
+  // Preferred supplier (replaces free-text vendor going forward).
+  supplierId: integer('supplier_id').references(() => suppliers.id),
+  // Unit of measure: how it's bought vs. how it's counted, with a conversion
+  // factor between them (count units per ONE purchase unit). Most items are
+  // 1:1 ('each'/'each'); roll SKUs are 'roll'/'roll' by decision (whole rolls,
+  // never partial-roll footage — see CLAUDE.md). `count` is ALWAYS count units.
+  purchaseUnit: text('purchase_unit'),
+  countUnit: text('count_unit'),
+  purchaseToCountFactor: real('purchase_to_count_factor').notNull().default(1),
+  // Min/Max reorder logic. Min stays `lowStockThreshold` (every existing
+  // consumer — dashboard, LOW chips, reorder report — already reads it).
+  // Max is the reorder-up-to quantity in count units.
+  reorderMaxQty: integer('reorder_max_qty'),
+  // Rolling average daily usage in count units, recomputed when a cycle-count
+  // session closes: (baseline count + receipts since − new count) / days.
+  avgDailyUse: real('avg_daily_use'),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
 });
@@ -77,9 +111,20 @@ export const inventoryAdjustments = sqliteTable('inventory_adjustments', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   itemId: integer('item_id').notNull().references(() => inventoryItems.id),
   delta: integer('delta').notNull(),
-  reason: text('reason').notNull(), // received | used | damaged | cycle_count | correction
+  // See ADJUST_REASONS in shared/domain.ts — extended 2026-07-07 with 'sold'
+  // (counter-sale deduction) and the cycle-count variance reason codes.
+  reason: text('reason').notNull(),
   note: text('note'), // discrepancy explanation
   createdBy: text('created_by'),
+  // Receiving: cost paid per PURCHASE unit on 'received' rows — the per-receipt
+  // cost history behind the cost-trend view (lastCostCents on the item is only
+  // the latest). supplierId records who it actually came from (may differ from
+  // the item's preferred supplier).
+  unitCostCents: integer('unit_cost_cents'),
+  supplierId: integer('supplier_id').references(() => suppliers.id),
+  // Set when this adjustment was written by a count session closing — ties the
+  // ledger row to the session, and excludes it from receipt/usage math.
+  cycleCountId: integer('cycle_count_id').references(() => cycleCounts.id),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
 });
 
@@ -87,5 +132,25 @@ export const cycleCounts = sqliteTable('cycle_counts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   scheduledFor: text('scheduled_for').notNull(), // ISO date
   completedAt: text('completed_at'),
+  completedBy: text('completed_by'), // who walked the count (v2, 2026-07-07)
   notes: text('notes'),
+});
+
+// One row per item actually counted in a session — the immutable snapshot
+// behind variance review and the per-item variance-trend view. systemCount is
+// what the app believed at the moment the session closed; countedQty is what
+// was on the shelf. unitCostCents is the per-COUNT-unit cost snapshot used for
+// the dollar-impact sort (lastCostCents ÷ purchaseToCountFactor at the time).
+// reasonCode is required (server-enforced) when the variance beat the
+// configured threshold; below it the drift books as plain 'cycle_count'.
+export const cycleCountLines = sqliteTable('cycle_count_lines', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  cycleCountId: integer('cycle_count_id').notNull().references(() => cycleCounts.id),
+  itemId: integer('item_id').notNull().references(() => inventoryItems.id),
+  systemCount: integer('system_count').notNull(),
+  countedQty: integer('counted_qty').notNull(),
+  unitCostCents: integer('unit_cost_cents'),
+  reasonCode: text('reason_code'),
+  note: text('note'),
+  createdAt: text('created_at').notNull().$defaultFn(nowIso),
 });

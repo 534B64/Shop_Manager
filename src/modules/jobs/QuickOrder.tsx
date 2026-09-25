@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { formatCents, parseDollarsToCents, formatDate } from '../../lib/format';
 import { get, post } from '../../lib/api';
 import { currentUser } from '../../lib/session';
-import type { Customer } from '../../lib/types';
+import type { Customer, InventoryItem } from '../../lib/types';
 
 interface PaymentRow { id: number; amountCents: number; method: string; kind: string; voidedAt: string | null; createdAt: string; jobTitle: string | null; }
 const METHODS = ['cash', 'check', 'card', 'other'];
@@ -33,22 +33,40 @@ export default function QuickOrder() {
   }
   const [error, setError] = useState('');
   const [done, setDone] = useState('');
+  // Optional "from stock" link (2026-07-07): picking an inventory item makes
+  // the sale deduct it on the server. Free-text sales stay exactly as before —
+  // the weekly cycle count reconciles whatever isn't linked.
+  const [stock, setStock] = useState<InventoryItem[]>([]);
+  const [stockQuery, setStockQuery] = useState('');
+  const [stockItem, setStockItem] = useState<InventoryItem | null>(null);
+  const [stockQty, setStockQty] = useState('1');
 
   const refresh = () => get<PaymentRow[]>('/api/payments').then(setRecent).catch(() => {});
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => {
+    refresh();
+    get<InventoryItem[]>('/api/inventory').then(setStock).catch(() => {});
+  }, []);
+
+  const stockMatches = stockQuery.trim().length >= 2 && !stockItem
+    ? stock.filter((i) => i.name.toLowerCase().includes(stockQuery.trim().toLowerCase())).slice(0, 8)
+    : [];
 
   async function ring() {
     const cents = parseDollarsToCents(amount);
     if (!customer) return setError('Pick a customer — use Walk-in if none.');
     if (!title.trim() || cents === null || cents <= 0) return setError('Description and a valid amount required.');
+    const qty = Math.max(1, Math.round(Number(stockQty)) || 1);
     setError(''); setDone('');
     try {
       await post('/api/pos/sale', {
         clientRef: crypto.randomUUID(), title: title.trim(), amountCents: cents, method,
         customerId: customer.id, ...(currentUser() ? { createdBy: currentUser()! } : {}),
+        ...(stockItem ? { inventoryItemId: stockItem.id, stockQty: qty } : {}),
       });
-      setDone(`Rang up ${formatCents(cents)} — ${title.trim()}`);
-      setTitle(''); setAmount(''); refresh();
+      setDone(`Rang up ${formatCents(cents)} — ${title.trim()}${stockItem ? ` (−${qty} ${stockItem.name})` : ''}`);
+      setTitle(''); setAmount(''); setStockItem(null); setStockQuery(''); setStockQty('1');
+      refresh();
+      get<InventoryItem[]>('/api/inventory').then(setStock).catch(() => {});
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed'); }
   }
 
@@ -85,6 +103,33 @@ export default function QuickOrder() {
           </div>
           <input className={`${input} w-full`} placeholder="What is it? (Stock flag decal 5in)"
             value={title} onChange={(e) => setTitle(e.target.value)} />
+          {/* Optional: link the sale to a stocked item so it deducts on ring-up. */}
+          {stockItem ? (
+            <div className="flex items-center gap-2">
+              <span className="flex-1 px-3 py-2 bg-bg border border-accent rounded-token text-sm">
+                From stock: <b>{stockItem.name}</b> <span className="text-muted">({stockItem.count} on hand)</span>
+              </span>
+              <input className={`${input} w-20 text-base py-2`} inputMode="numeric" value={stockQty}
+                onChange={(e) => setStockQty(e.target.value)} title="Quantity to deduct" />
+              <button type="button" onClick={() => { setStockItem(null); setStockQuery(''); }}
+                className="px-3 py-2 border border-line rounded-token text-sm hover:bg-bg">×</button>
+            </div>
+          ) : (
+            <div className="relative">
+              <input className={`${input} w-full text-base py-2`} placeholder="From stock? (optional — start typing an inventory item)"
+                value={stockQuery} onChange={(e) => setStockQuery(e.target.value)} />
+              {stockMatches.length > 0 && (
+                <div className="absolute z-10 left-0 right-0 bg-surface border border-line rounded-token mt-1 shadow">
+                  {stockMatches.map((i) => (
+                    <button key={i.id} type="button" className="block w-full text-left px-3 py-2 hover:bg-bg text-sm"
+                      onClick={() => { setStockItem(i); setStockQuery(i.name); if (!title.trim()) setTitle(i.name); }}>
+                      {i.name} <span className="text-muted">({i.count} on hand)</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="flex gap-3">
             <input className={`${input} w-32`} placeholder="$" inputMode="decimal"
               value={amount} onChange={(e) => setAmount(e.target.value)}

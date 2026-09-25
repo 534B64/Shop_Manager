@@ -180,8 +180,26 @@ context.
 - [x] Integration test coverage for inventory routes — DONE 2026-07-01: `/adjust`, cycle-count complete (+auto-reschedule), stock-check batch, SKU color validation, price verification, and override attribution all covered; suite now 28 integration tests / 119 total, all passing.
 - [x] **Server-side quote-math verification** (added + DONE 2026-07-01, from the codebase critique's top finding): the server now recomputes the suggested total (`shared/priceVerify.ts` + material rules) and the grand total (tax → after-tax discount) on every job create/edit and stores ITS answer; a stale client (old tax rate / pricing settings) gets a non-blocking warning on the Quotes page. The human-set final price is never second-guessed.
 
+## Phase 12 — Inventory management (weekly-cycle-count based) — shipped 2026-07-09
+Full spec session with Josiah; all design decisions confirmed via Q&A first.
+Core principle preserved: no production-consumption tracking — the weekly
+count reconciles everything that isn't a tracked counter sale. Migration
+`0012`; 147 tests passing; see `devlog.md` 2026-07-09 for the full entry.
+- [x] Suppliers table (lead-time days, contact, active) + admin UI on Taxonomy page; backfilled from free-text vendor strings (vendor columns retained read-only); delete blocked while receipts reference the supplier
+- [x] UOM per item: purchase unit / count unit / conversion factor (1:1 default; roll SKUs fixed at roll/roll — whole-roll counting decision stands); `count` always in count units
+- [x] Cycle count v2: blind entry (system counts hidden), worklist grouped by category, variance review sorted by dollar impact, reason codes required above the configurable threshold (±5% or ±5 units default, Settings-adjustable), submit locks the session (who/when/what recorded in `cycle_count_lines`), auto-reschedule kept
+- [x] Avg daily usage recomputed per item at session close (28-day count-to-count window + receipts) — no rate until two counts exist, no invented numbers
+- [x] Min/Max reorder: `lowStockThreshold` stays the operative Min; AUTO button suggests usage × (supplier lead + buffer days); new Max (reorder-up-to); needs-ordering view sorted by urgency (days-until-stockout, then depth below Min)
+- [x] Receiving form: qty in purchase units (converted), cost per purchase unit stored per receipt, supplier, who — cost-trend history per item
+- [x] Counter-sale deduction: optional "from stock" picker on Quick Order → `/api/pos/sale` deducts (reason `sold`, idempotent on retry, clamps at zero, never blocks the sale)
+- [x] Reports: stock-status dots (in/low/out), on-hand valuation (÷ factor × last cost), per-item cost trend + count-variance history with repeated-variance signal (3+ of last 4 counts flagged), usage view (replaced manual-tap trends)
+- [ ] Set real lead times on the backfilled suppliers (Taxonomy → Suppliers; default 7d) — operational, your data entry
+- [ ] Run `7-Runtime-Test.bat` to confirm this phase + the 2026-07-03 reorg locally
+- [ ] **Milestone: two weekly counts completed → AUTO Min activates with real usage rates**
+
 ## Explicitly Out of Scope (v1)
-- Per-job material consumption / partial roll tracking (the Phase 8 stock check is a count>0 *lookup*, not deduction)
+- Per-job material consumption / partial roll tracking (the Phase 8 stock check is a count>0 *lookup*, not deduction; the Phase 12 counter-sale deduction is a tracked *sale* of a stocked item — a deliberate, single exception, not BOM consumption)
+- Lot/batch tracking; multi-location/bin-level tracking; statistical safety-stock formulas (z-scores etc.) — Phase 12 non-goals, lead-time + avg usage is enough
 - Integrated card processing (Stripe/Square/Venmo/CashApp) — revisit post-rollout; find what the shop swipes today first (see ROADMAP §D)
 - Online ordering / customer portal
 - User roles & permissions (revisit if team grows past ~5)

@@ -68,3 +68,35 @@ export const DEFAULT_UNIT_TYPES = ['sqft', 'each', 'sheet', 'linear_ft', 'roll']
 
 export const THEMES = ['light', 'dark', 'minimal'] as const;
 export type Theme = (typeof THEMES)[number];
+
+// ---- Inventory adjustment reasons (extended 2026-07-07) ----
+// The original five stay valid; 'sold' is the counter-sale deduction, and the
+// rest are the cycle-count variance reason codes (required, server-enforced,
+// when a count variance beats the configured threshold — 'correction' doubles
+// as the miscount/correction code, 'damaged' was already present).
+export const ADJUST_REASONS = [
+  'received', 'used', 'sold', 'damaged', 'cycle_count', 'correction',
+  'production_use', 'waste_scrap', 'theft_loss', 'receiving_error', 'other',
+] as const;
+export type AdjustReason = (typeof ADJUST_REASONS)[number];
+
+/** The reason codes a variance-review screen offers (a subset of ADJUST_REASONS). */
+export const VARIANCE_REASON_CODES = [
+  'production_use', 'waste_scrap', 'correction', 'damaged',
+  'theft_loss', 'receiving_error', 'other',
+] as const;
+export type VarianceReasonCode = (typeof VARIANCE_REASON_CODES)[number];
+
+export const ADJUST_REASON_LABELS: Record<AdjustReason, string> = {
+  received: 'Received',
+  used: 'Used',
+  sold: 'Sold (counter sale)',
+  damaged: 'Damaged',
+  cycle_count: 'Cycle count',
+  correction: 'Miscount / correction',
+  production_use: 'Production use (untracked)',
+  waste_scrap: 'Waste / scrap',
+  theft_loss: 'Theft / loss suspected',
+  receiving_error: 'Receiving error',
+  other: 'Other',
+};

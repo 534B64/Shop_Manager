@@ -3,6 +3,7 @@ import { eq, desc, sql, and, isNull } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { payments, jobs, customers, customerCredits } from '../../db/schema/index.js';
 import { creditBalanceCents } from './service.js';
+import { recordSale } from '../inventory/index.js';
 
 export const PAYMENT_METHODS = ['cash', 'check', 'card', 'credit', 'other'] as const;
 
@@ -200,11 +201,15 @@ export async function paymentRoutes(app: FastifyInstance) {
           method: { type: 'string', enum: ['cash', 'check', 'card', 'other'] },
           customerId: { type: 'integer' },
           createdBy: { type: 'string', maxLength: 60 },
+          // Optional "from stock" link (2026-07-07): when the counter sale is
+          // a stocked item, deduct it from inventory. qty is in COUNT units.
+          inventoryItemId: { type: 'integer' },
+          stockQty: { type: 'integer', minimum: 1, maximum: 9999 },
         },
       },
     },
   }, async (req, reply) => {
-    const body = req.body as { clientRef: string; title: string; amountCents: number; method: string; customerId?: number; createdBy?: string };
+    const body = req.body as { clientRef: string; title: string; amountCents: number; method: string; customerId?: number; createdBy?: string; inventoryItemId?: number; stockQty?: number };
     const [existing] = await db.select().from(jobs).where(eq(jobs.clientRef, body.clientRef));
     if (existing) return existing;
     const [job] = await db.insert(jobs).values({
@@ -216,6 +221,16 @@ export async function paymentRoutes(app: FastifyInstance) {
       clientRef: body.clientRef + ':pay', jobId: job.id,
       amountCents: body.amountCents, method: body.method,
     });
+    // Counter-sale deduction — the ONE tracked-sale write into inventory
+    // (weekly cycle counts reconcile everything else). Sits after the
+    // idempotency return above, so a wifi retry never deducts twice; clamps at
+    // zero and never blocks the sale — money beats count accuracy.
+    if (body.inventoryItemId != null) {
+      try {
+        await recordSale({ itemId: body.inventoryItemId, qty: body.stockQty ?? 1,
+          title: body.title, jobId: job.id, createdBy: body.createdBy ?? null });
+      } catch { /* the sale stands even if the deduction fails */ }
+    }
     reply.code(201);
     return job;
   });

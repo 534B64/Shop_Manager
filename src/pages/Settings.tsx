@@ -17,11 +17,18 @@ export default function Settings() {
   const [saved, setSaved] = useState('');
   const [tErr, setTErr] = useState('');
   const [userSearch, setUserSearch] = useState('');
+  // Inventory knobs (2026-07-07): count-variance threshold + reorder buffer.
+  const [invPct, setInvPct] = useState('5');
+  const [invUnits, setInvUnits] = useState('5');
+  const [invBuffer, setInvBuffer] = useState('3');
 
   useEffect(() => {
     fetch('/api/health').then((r) => setHealth(r.ok ? 'ok' : 'down')).catch(() => setHealth('down'));
     get<Record<string, number>>('/api/settings/levels').then((l) => setLevels({ 1: String(l['1']), 2: String(l['2']), 3: String(l['3']) })).catch(() => {});
     get<{ ratePct: number }>('/api/settings/tax').then((t) => setTaxRate(String(t.ratePct))).catch(() => {});
+    get<{ pctThreshold: number; unitThreshold: number; reorderBufferDays: number }>('/api/settings/inventory')
+      .then((s) => { setInvPct(String(s.pctThreshold)); setInvUnits(String(s.unitThreshold)); setInvBuffer(String(s.reorderBufferDays)); })
+      .catch(() => {});
     refreshUsers();
   }, []);
 
@@ -44,6 +51,11 @@ export default function Settings() {
     try {
       await put('/api/settings/tax', { ratePct: Number(taxRate) || 0 });
       await put('/api/settings/levels', { 1: Number(levels['1']) || 0, 2: Number(levels['2']) || 0, 3: Number(levels['3']) || 0 });
+      await put('/api/settings/inventory', {
+        pctThreshold: Math.max(0, Number(invPct) || 0),
+        unitThreshold: Math.max(0, Number(invUnits) || 0),
+        reorderBufferDays: Math.max(0, Number(invBuffer) || 0),
+      });
       setSaved('Saved. New quotes use these settings immediately.');
     } catch (e) { setTErr(e instanceof Error ? e.message : 'Save failed'); }
   }
@@ -113,6 +125,21 @@ export default function Settings() {
                 onChange={(e) => setLevels({ ...levels, [l]: e.target.value })} /></label>
           ))}
         </div>
+        <div className="mt-5 pt-4 border-t border-line">
+          <h3 className="font-semibold mb-1">Inventory</h3>
+          <p className="text-sm text-muted mb-3">A cycle-count variance needs a reason when it beats either threshold. Buffer days pad the AUTO reorder point (usage/day × lead + buffer).</p>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
+            <label className="block text-sm"><span className="text-muted">Variance threshold (%)</span>
+              <input className={tIn} inputMode="decimal" value={invPct}
+                onChange={(e) => setInvPct(e.target.value)} /></label>
+            <label className="block text-sm"><span className="text-muted">Variance threshold (units)</span>
+              <input className={tIn} inputMode="decimal" value={invUnits}
+                onChange={(e) => setInvUnits(e.target.value)} /></label>
+            <label className="block text-sm"><span className="text-muted">Reorder buffer (days)</span>
+              <input className={tIn} inputMode="decimal" value={invBuffer}
+                onChange={(e) => setInvBuffer(e.target.value)} /></label>
+          </div>
+        </div>
         <div className="mt-4 flex items-center gap-3">
           <button onClick={saveTuning} className="px-5 py-2.5 bg-accent text-accent-contrast rounded-token font-semibold">Save</button>
           {saved && <span className="text-ok text-sm">{saved}</span>}
@@ -140,7 +167,7 @@ export default function Settings() {
         <h2 className="font-semibold text-lg mb-3">Admin</h2>
         <a href="/materials" className="text-accent underline">Manage materials & costs</a>
         <p className="text-sm text-muted mt-1 mb-3">Cost changes only affect future quotes.</p>
-        <a href="/taxonomy" className="text-accent underline">Manage inventory categories & units</a>
+        <a href="/taxonomy" className="text-accent underline">Manage inventory categories, units & suppliers</a>
         <p className="text-sm text-muted mt-1 mb-3">Organizes inventory; never changes pricing or the stock check.</p>
         <button onClick={async () => {
           const cur = prompt('Current admin password:'); if (cur === null) return;

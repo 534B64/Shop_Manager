@@ -4,7 +4,7 @@ import { materialRoutes } from './modules/materials/index.js';
 import { customerRoutes } from './modules/customers/index.js';
 import { jobRoutes } from './modules/jobs/index.js';
 import { paymentRoutes } from './modules/payments/index.js';
-import { inventoryRoutes, categoryRoutes } from './modules/inventory/index.js';
+import { inventoryRoutes, categoryRoutes, supplierRoutes } from './modules/inventory/index.js';
 import { settingsRoutes } from './modules/settings/index.js';
 import { userRoutes } from './modules/users/index.js';
 
@@ -33,6 +33,7 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   await app.register(settingsRoutes);
   await app.register(userRoutes);
   await app.register(categoryRoutes);
+  await app.register(supplierRoutes);
 
   return app;
 }

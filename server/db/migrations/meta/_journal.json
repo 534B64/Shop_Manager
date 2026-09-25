@@ -85,6 +85,13 @@
       "when": 1782700000000,
       "tag": "0011_roll_sku_integrity",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "6",
+      "when": 1783300000000,
+      "tag": "0012_inventory_management",
+      "breakpoints": true
     }
   ]
 }
