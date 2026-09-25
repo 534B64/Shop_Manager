@@ -13,7 +13,15 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "tsx server/db/migrate-cli.ts",
     "db:seed": "tsx server/db/seed.ts",
+    "db:seed:perf": "tsx server/db/seed-perf.ts",
+    "perf:baseline": "tsx scripts/perf-baseline.ts",
     "test": "vitest run"
+  },
+  "allowScripts": {
+    "esbuild@0.18.20": true,
+    "esbuild@0.19.12": true,
+    "esbuild@0.21.5": true,
+    "esbuild@0.28.1": true
   },
   "dependencies": {
     "@fastify/static": "^7.0.4",

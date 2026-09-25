@@ -1,0 +1,68 @@
+# Performance baseline — 2026-09-25
+
+**Method.** Seeded a throwaway DB with `DB_PATH=/tmp/perf-test.db npm run db:seed:perf`
+(5,000 inventory items incl. 225 roll SKUs, 500 customers, 3,000 jobs / 4,344 job items,
+3,577 payments, 20,000 inventory adjustments over 2 years, 105 cycle counts; deterministic),
+then ran `DB_PATH=/tmp/perf-test.db npm run perf:baseline`. The script builds the real app via
+`buildApp()` and times each first-view GET in-process with `app.inject` (1 warm-up discarded,
+then the median of 5). Timings are handler + SQLite + JSON serialization on a WSL2 dev box —
+**no network**, so real LAN/wifi transfer time comes on top (see Size). Re-run after any change to
+compare; numbers are only comparable against the same seed.
+
+| Endpoint | Page | Median ms | Size KB | Rows | Unpaginated | Notes |
+|---|---|---:|---:|---:|:---:|---|
+| `/api/dashboard` | Dashboard | 54.8 | 21.1 | — | yes | all inventory rows, filtered in memory |
+| `/api/jobs?limit=200` | Dashboard / Orders | 4.8 | 122.5 | 200 |  | LIMIT 200 (server cap 500) |
+| `/api/jobs?limit=50` | Quotes | 2.1 | 30.8 | 50 |  | LIMIT 50; search `q` filters in memory AFTER the limit |
+| `/api/jobs?limit=500` | (max page size) | 10.6 | 306.3 | 500 |  | server cap |
+| `/api/jobs/1` | Orders (detail) | 0.6 | 0.6 | — |  | one job + items |
+| `/api/customers` | Customers | 2.3 | 39.2 | 200 |  | LIMIT 200; group-by over all jobs |
+| `/api/customers?q=Walk-in` | Quick Order | 3.1 | 0.0 | 0 |  | loads up to 2000 rows, filters in memory |
+| `/api/inventory` | Inventory | 60.4 | 2059.0 | 5000 | yes |  |
+| `/api/inventory/reorder` | Inventory | 47.0 | 85.5 | 308 | yes | full scan + in-memory sort |
+| `/api/inventory/usage` | Inventory | 53.0 | 617.5 | 5000 | yes | full scan + in-memory sort |
+| `/api/inventory/valuation` | Inventory | 46.2 | 0.5 | — | yes | full scan, aggregated object |
+| `/api/inventory/1/history` | Inventory (item log) | 0.5 | 0.5 | 3 |  | LIMIT 50 |
+| `/api/roll-skus` | Inventory / Quotes | 2.7 | 90.3 | 225 | yes |  |
+| `/api/cycle-counts/next` | Inventory (cycle count) | 0.1 | 0.1 | — |  |  |
+| `/api/materials` | Materials / Quotes | 0.3 | 3.6 | 14 | yes |  |
+| `/api/materials?all=1` | Materials (admin) | 0.3 | 3.6 | 14 | yes |  |
+| `/api/categories` | Taxonomy / Inventory | 0.4 | 1.4 | 8 | yes |  |
+| `/api/suppliers` | Taxonomy / Inventory | 0.2 | 0.9 | 6 | yes |  |
+| `/api/payments` | Payments | 1.5 | 22.3 | 100 |  | LIMIT 100 |
+| `/api/balances` | Payments | 13.6 | 59.4 | 388 | yes | every job, filtered to owing in memory |
+| `/api/reports/summary` | Reports | 19.5 | 0.2 | — | yes | reads ALL payments, filters in memory |
+| `/api/reports/payments.csv` | Reports (CSV) | 23.7 | 337.7 | 3577 | yes |  |
+| `/api/reports/jobs.csv` | Reports (CSV) | 19.4 | 317.9 | 3000 | yes |  |
+| `/api/settings/tax` | Settings / all | 0.2 | 0.0 | — |  |  |
+| `/api/settings/inventory` | Settings / all | 0.2 | 0.1 | — |  |  |
+| `/api/users` | Sign-in | 0.1 | 0.0 | 0 |  |  |
+
+## Slowest (median ms)
+1. `/api/inventory` — 60 ms
+2. `/api/dashboard` — 55 ms
+3. `/api/inventory/usage` — 53 ms
+4. `/api/inventory/reorder` — 47 ms
+5. `/api/inventory/valuation` — 46 ms
+
+## Biggest (response size)
+1. `/api/inventory` — **2.06 MB** (5,000 rows, every column)
+2. `/api/inventory/usage` — 618 KB
+3. `/api/reports/payments.csv` — 338 KB, `/api/reports/jobs.csv` — 318 KB (exports; expected)
+4. `/api/jobs?limit=500` — 306 KB; the pages actually use `limit=200` (123 KB)
+
+## Findings
+- **Every slow or large endpoint is an unpaginated full-table read of `inventory_items`.** Five
+  endpoints (`/api/inventory`, `/dashboard`, `/reorder`, `/usage`, `/valuation`) each `SELECT *` all
+  5,000 rows and filter/sort/aggregate in JS; the ~46–60 ms floor is that scan, not the payload.
+- `/api/dashboard` ships only the low-stock list (21 KB) but pays the full inventory scan to compute it —
+  a `WHERE active AND count <= low_stock_threshold` in SQL would avoid that.
+- `/api/inventory` at 2 MB is the transfer-cost problem on sketchy wifi; the response is also not
+  compressed (no `@fastify/compress` registered).
+- Other unpaginated endpoints (`/api/balances`, `/api/reports/summary`, CSV exports, `/api/roll-skus`,
+  materials/categories/suppliers) are fine at this volume (≤ 24 ms; the small lookup tables are tiny).
+  `/api/balances` and `/api/reports/summary` scale with jobs/payments and are the next to watch.
+- Job/customer/payment lists are capped server-side (`limit`, 200, 100) and are fast (2–5 ms).
+  Caveat: `/api/jobs?q=` filters in memory *after* the limit, so search only covers the newest N rows.
+- Seed caveat: `/api/customers?q=Walk-in` returns 0 rows because the perf seed has no Walk-in
+  customer; the cost measured is the 500-row scan + filter.

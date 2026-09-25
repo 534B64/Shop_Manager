@@ -422,3 +422,23 @@ the sandbox — run `4-Production.bat`/normal build once locally to refresh
   this session's fields exist so the seed can set supplier/UOM in one pass.
 - `7-Runtime-Test.bat` should be run on Windows to confirm this session +
   the 2026-07-03 reorg together.
+
+### 2026-09-25 — Phase 0 (hardening): AGENTS.md, perf seeder, baseline
+Setup for a larger refactor/hardening effort. **No app features, schema, or UI changed.**
+
+- Added `AGENTS.md` (agent env setup + verify commands + guardrails; points at `CLAUDE.md`).
+- `.gitignore` gained `node_modules` (no slash, so a symlinked `node_modules` is ignored too);
+  `package.json` gained `allowScripts` for the four esbuild versions in the lockfile (npm 11).
+  `tsconfig.json` now also type-checks `scripts/`.
+- **Perf tooling** — `server/db/seed-perf.ts` (`npm run db:seed:perf`) fills a throwaway DB with
+  5,000 inventory items, 500 customers, 3,000 jobs (+4,344 items), 3,577 payments, 20,000 adjustments,
+  105 cycle counts in ~1 s, deterministic (seeded PRNG, fixed anchor date). `scripts/perf-baseline.ts`
+  (`npm run perf:baseline`) times first-view GETs via `app.inject`. Both refuse to run unless `DB_PATH`
+  is set explicitly and doesn't contain `dp-erp.db` (`server/db/perf-guard.ts`, +3 tests → 150).
+  The seeder also refuses a DB that already has data.
+- **Baseline** (`docs/perf-baseline.md`): everything is fast (< 25 ms) except the unpaginated
+  `inventory_items` full scans — `/api/inventory` 60 ms and **2.06 MB**, `/api/dashboard` 55 ms,
+  `/api/inventory/usage` 53 ms, `/reorder` 47 ms, `/valuation` 46 ms. Job/customer/payment lists are
+  capped and take 2–5 ms.
+- **Still open:** paginate / push filters into SQL for the inventory endpoints; consider response
+  compression; `/api/jobs?q=` filters after the limit (search only covers the newest N rows).
