@@ -113,10 +113,20 @@ used in code, docs, or conversation, it means exactly this.
 
 - **Walk-in** — the one generic customer record Quick Order uses; the sole
   exemption from the email-required rule.
-- **Level** — admin-assigned customer tier 0–3; levels 1+ get a discount %.
-- **Account / admin password** — LAN-trust attribution, not security. Account
-  passwords gate edits and attribution; one shared admin password gates
-  configuration and overrides.
+- **Level** — manager-assigned customer tier 0–3; levels 1+ get a discount %.
+- **Role** — what an account may do: **cashier** (quotes, orders, payments,
+  receiving, counts), **manager** (also approves money/override actions and
+  runs inventory setup), **admin** (also pricing, tax, and accounts). Every
+  account has exactly one role; the shop must always keep one active admin.
+- **Session** — a person's signed-in presence on one PC, started with their
+  name + PIN. Everything done in a session is recorded under that person.
+  Sessions end on sign-out, after a long idle, or when an admin changes the
+  account.
+- **Manager approval** — a manager (or admin) entering *their own* name + PIN
+  at the moment a sensitive action happens (void, refund, unpaid pickup,
+  removing an order or customer, store-credit or stock corrections). A manager
+  acting alone approves themselves. Every approval is logged permanently with
+  who asked and who approved.
 
 ### Explicit non-concepts
 

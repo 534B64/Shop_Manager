@@ -1,9 +1,17 @@
 // Realistic dev seed data for Decals Plus.
-// Idempotent: materials only when the table is empty; sample jobs only when there are none.
+// Idempotent: materials only when the table is empty; sample jobs only when there are none;
+// demo accounts only when missing by name.
+//
+// Demo accounts (DEV ONLY — roles + PINs, ADR 0004):
+//   Josiah — admin   — PIN 1234
+//   Amy    — manager — PIN 2222
+//   Sam    — cashier — PIN 3333
 import { db, runMigrations } from './index.js';
 import { customers, materials, jobs } from './schema/index.js';
+import { seedDemoUsers } from './seed-users.js';
 
 await runMigrations();
+const usersAdded = await seedDemoUsers();
 
 // The price book may already be inserted by the migrations — only seed materials
 // when the table is empty, so we never create duplicate rows.
@@ -96,5 +104,5 @@ await db.insert(jobs).values([
   },
 ]);
 
-console.log('Seed complete: price book ensured, 3 sample customers, 5 sample jobs.');
+console.log(`Seed complete: price book ensured, ${usersAdded} demo account(s) added, sample customers/jobs ensured.`);
 process.exit(0);

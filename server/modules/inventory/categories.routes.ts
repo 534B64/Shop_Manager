@@ -2,14 +2,13 @@ import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { categories, categorySizes, categoryFields, inventoryItems } from '../../db/schema/index.js';
-import { requireAdmin } from '../settings/index.js';
+import { requireRole } from '../auth/index.js';
 
 // ---- Smart categories (Phase 10, Slice 2) ----
 // ORTHOGONAL to the roll-SKU/estimator path: categories are a new
 // organizational layer on top of every inventory item. They never touch
 // material_colors, nominalWidthIn, or the stock-check, and the estimator does
-// not read them. No API password here — page-level AdminGate guards the UI,
-// matching the materials/colors endpoints this mirrors.
+// not read them. Create/edit is manager+, delete is admin-only (ADR 0004).
 const categoryBody = {
   type: 'object',
   required: ['name'],
@@ -32,6 +31,7 @@ export async function categoryRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/categories', { schema: { body: categoryBody } }, async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
     const b = req.body as { name: string; default_unit?: string; tracks_color?: boolean; default_vendor?: string };
     const [row] = await db.insert(categories).values({
       name: b.name.trim(),
@@ -54,22 +54,19 @@ export async function categoryRoutes(app: FastifyInstance) {
         active: { type: 'boolean' },
       } } },
   }, async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
     const id = Number((req.params as { id: string }).id);
     const [row] = await db.update(categories).set(req.body as object).where(eq(categories.id, id)).returning();
     if (!row) return reply.code(404).send({ error: 'Category not found' });
     return row;
   });
 
-  // Hard delete with admin password. Referencing inventory items are kept — their
+  // Hard delete, admin only. Referencing inventory items are kept — their
   // categoryId is cleared (they fall back to "Other / Consumables"). The category's
   // size list and custom-field defs are removed with it.
-  app.delete('/api/categories/:id', {
-    schema: { body: { type: 'object', required: ['adminPassword'], additionalProperties: false,
-      properties: { adminPassword: { type: 'string' } } } },
-  }, async (req, reply) => {
+  app.delete('/api/categories/:id', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
-    const { adminPassword: ap } = req.body as { adminPassword: string };
-    if (!(await requireAdmin(ap))) return reply.code(401).send({ error: 'Admin password required' });
     await db.update(inventoryItems).set({ categoryId: null }).where(eq(inventoryItems.categoryId, id));
     await db.delete(categorySizes).where(eq(categorySizes.categoryId, id));
     await db.delete(categoryFields).where(eq(categoryFields.categoryId, id));
@@ -91,6 +88,7 @@ export async function categoryRoutes(app: FastifyInstance) {
     schema: { body: { type: 'object', required: ['label'], additionalProperties: false,
       properties: { label: { type: 'string', minLength: 1, maxLength: 60 } } } },
   }, async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
     const id = Number((req.params as { id: string }).id);
     const { label } = req.body as { label: string };
     const [category] = await db.select().from(categories).where(eq(categories.id, id));
@@ -106,6 +104,7 @@ export async function categoryRoutes(app: FastifyInstance) {
   });
 
   app.delete('/api/categories/:id/sizes/:sizeId', async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
     const sizeId = Number((req.params as { sizeId: string }).sizeId);
     const [row] = await db.delete(categorySizes).where(eq(categorySizes.id, sizeId)).returning();
     if (!row) return reply.code(404).send({ error: 'Size not found' });

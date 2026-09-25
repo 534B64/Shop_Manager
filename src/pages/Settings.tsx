@@ -1,12 +1,19 @@
 import { useEffect, useState } from 'react';
 import { THEMES, CUSTOM_ACCENTS, DEFAULT_TAX_RATE_PCT, type Theme } from '../../shared/domain';
 import { getPrefs, applyPrefs, type Prefs } from '../lib/theme';
-import { savePrefs } from '../lib/session';
-import { get, put, post } from '../lib/api';
-import AdminGate from '../components/AdminGate';
+import { savePrefs, hasRole, sessionUser, type Role } from '../lib/session';
+import { get, put, post, del } from '../lib/api';
+import RoleGate from '../components/RoleGate';
 
 const THEME_LABELS: Record<Theme, string> = { light: 'Light', dark: 'Dark', minimal: 'High Contrast' };
-interface User { id: number; name: string; }
+const ROLES: Role[] = ['cashier', 'manager', 'admin'];
+const ROLE_HINT: Record<Role, string> = {
+  cashier: 'quotes, orders, payments; voids/refunds need a manager',
+  manager: 'approves voids, refunds, overrides; runs inventory setup',
+  admin: 'everything, incl. pricing, tax, and accounts',
+};
+const PIN_RE = /^\d{4,12}$/;
+interface User { id: number; name: string; role: Role; active: boolean; hasPin: boolean; }
 
 export default function Settings() {
   const [prefs, setPrefs] = useState<Prefs>(getPrefs);
@@ -29,10 +36,10 @@ export default function Settings() {
     get<{ pctThreshold: number; unitThreshold: number; reorderBufferDays: number }>('/api/settings/inventory')
       .then((s) => { setInvPct(String(s.pctThreshold)); setInvUnits(String(s.unitThreshold)); setInvBuffer(String(s.reorderBufferDays)); })
       .catch(() => {});
-    refreshUsers();
+    if (hasRole('admin')) refreshUsers();
   }, []);
 
-  const refreshUsers = () => get<User[]>('/api/users').then(setUsers).catch(() => {});
+  const refreshUsers = () => get<User[]>('/api/users?all=1').then(setUsers).catch(() => {});
 
   // Theme changes save to the signed-in account.
   function pickTheme(t: Theme) {
@@ -60,23 +67,44 @@ export default function Settings() {
     } catch (e) { setTErr(e instanceof Error ? e.message : 'Save failed'); }
   }
 
+  const fail = (e: unknown, fallback: string) => alert(e instanceof Error ? e.message : fallback);
+
   async function addUser() {
     const name = prompt('New account name:'); if (!name?.trim()) return;
-    const password = prompt(`Password for ${name}:`); if (!password) return;
-    const ap = prompt('Admin password (to authorize):'); if (ap === null) return;
-    try { await post('/api/users', { name: name.trim(), password, adminPassword: ap }); refreshUsers(); }
-    catch { alert('Admin password wrong or name invalid.'); }
+    const pin = prompt(`PIN for ${name} (4–12 digits):`); if (!pin) return;
+    if (!PIN_RE.test(pin)) return alert('PIN must be 4–12 digits.');
+    try { await post('/api/users', { name: name.trim(), role: 'cashier', pin }); refreshUsers(); }
+    catch (e) { fail(e, 'Could not add the account.'); }
   }
 
-  async function removeUser(u: User) {
-    const ap = prompt(`Admin password (to remove ${u.name}):`); if (ap === null) return;
+  async function setRole(u: User, role: Role) {
+    try { await put(`/api/users/${u.id}`, { role }); refreshUsers(); }
+    catch (e) { fail(e, 'Role change failed.'); refreshUsers(); }
+  }
+
+  async function resetPin(u: User) {
+    const pin = prompt(`New PIN for ${u.name} (4–12 digits). They'll be signed out everywhere:`); if (!pin) return;
+    if (!PIN_RE.test(pin)) return alert('PIN must be 4–12 digits.');
+    try { await put(`/api/users/${u.id}/pin`, { pin }); alert(`PIN reset for ${u.name}.`); refreshUsers(); }
+    catch (e) { fail(e, 'PIN reset failed.'); }
+  }
+
+  async function toggleActive(u: User) {
+    if (u.active && !confirm(`Deactivate ${u.name}? They're signed out and can't sign in until reactivated. Their name stays on past orders.`)) return;
     try {
-      await fetch(`/api/users/${u.id}`, {
-        method: 'DELETE', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ adminPassword: ap }),
-      }).then((r) => { if (!r.ok) throw new Error(); });
+      if (u.active) await del(`/api/users/${u.id}`, {});
+      else await put(`/api/users/${u.id}`, { active: true });
       refreshUsers();
-    } catch { alert('Admin password wrong.'); }
+    } catch (e) { fail(e, 'Update failed.'); }
+  }
+
+  async function changeMyPin() {
+    const current = prompt('Your current PIN:'); if (current === null) return;
+    const next = prompt('New PIN (4–12 digits):'); if (!next) return;
+    if (!PIN_RE.test(next)) return alert('PIN must be 4–12 digits.');
+    if (prompt('Repeat the new PIN:') !== next) return alert('PINs did not match — nothing changed.');
+    try { await put('/api/users/me/pin', { current, next }); alert('PIN changed. Other PCs signed in as you were signed out.'); }
+    catch (e) { fail(e, 'PIN change failed.'); }
   }
 
   const tIn = 'w-28 px-3 py-2 bg-bg border border-line rounded-token text-base';
@@ -110,8 +138,26 @@ export default function Settings() {
         )}
       </section>
 
+      <section className="bg-surface border border-line rounded-token p-5 mb-4 max-w-lg">
+        <h2 className="font-semibold text-lg mb-1">My account</h2>
+        <p className="text-sm text-muted mb-3">Signed in as <b className="text-ink">{sessionUser()?.name}</b> ({sessionUser()?.role}).</p>
+        <button onClick={changeMyPin} className="px-4 py-2 border border-line rounded-token text-sm hover:bg-bg">Change my PIN</button>
+      </section>
+
+      <RoleGate min="manager" quiet>
+      <section className="bg-surface border border-line rounded-token p-5 mb-4 max-w-2xl">
+        <h2 className="font-semibold text-lg mb-3">Admin</h2>
+        {hasRole('admin') && (<>
+          <a href="/materials" className="text-accent underline">Manage materials & costs</a>
+          <p className="text-sm text-muted mt-1 mb-3">Cost changes only affect future quotes.</p>
+        </>)}
+        <a href="/taxonomy" className="text-accent underline">Manage inventory categories, units & suppliers</a>
+        <p className="text-sm text-muted mt-1">Organizes inventory; never changes pricing or the stock check.</p>
+      </section>
+      </RoleGate>
+
       <div className="mb-4 max-w-2xl">
-      <AdminGate>
+      <RoleGate min="admin" quiet>
       <section className="bg-surface border border-line rounded-token p-5 mb-4 max-w-2xl">
         <h2 className="font-semibold text-lg mb-1">Pricing, tax & customer levels</h2>
         <p className="text-sm text-muted mb-4">Per-material rates live on the Materials page. Level discounts apply after tax.</p>
@@ -153,31 +199,27 @@ export default function Settings() {
           placeholder="Search accounts…" value={userSearch} onChange={(e) => setUserSearch(e.target.value)} />
         <div className="space-y-2 mb-3">
           {users.filter((u) => u.name.toLowerCase().includes(userSearch.trim().toLowerCase())).map((u) => (
-            <div key={u.id} className="flex items-center justify-between border-b border-line pb-2">
-              <span className="font-semibold">{u.name}</span>
-              <button onClick={() => removeUser(u)} className="px-3 py-1.5 text-sm border border-line rounded-token text-danger hover:bg-bg">Remove</button>
+            <div key={u.id} className={`flex flex-wrap items-center gap-2 border-b border-line pb-2 ${u.active ? '' : 'opacity-50'}`}>
+              <span className="font-semibold flex-1 min-w-24">
+                {u.name}
+                {!u.hasPin && u.active && <span className="text-warn text-xs font-normal ml-2">no PIN — can't sign in</span>}
+                {!u.active && <span className="text-muted text-xs font-normal ml-2">deactivated</span>}
+              </span>
+              <select value={u.role} onChange={(e) => setRole(u, e.target.value as Role)} disabled={!u.active}
+                title={ROLE_HINT[u.role]} className="px-2 py-1.5 text-sm bg-bg border border-line rounded-token">
+                {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
+              </select>
+              <button onClick={() => resetPin(u)} className="px-3 py-1.5 text-sm border border-line rounded-token hover:bg-bg">{u.hasPin ? 'Reset PIN' : 'Set PIN'}</button>
+              <button onClick={() => toggleActive(u)} className={`px-3 py-1.5 text-sm border border-line rounded-token hover:bg-bg ${u.active ? 'text-danger' : ''}`}>{u.active ? 'Deactivate' : 'Reactivate'}</button>
             </div>
           ))}
           {users.length === 0 && <p className="text-muted">No accounts yet — add the first one.</p>}
         </div>
+        <p className="text-sm text-muted mb-3">New accounts start as cashier — pick a role after adding. Roles: {ROLES.map((r) => `${r} (${ROLE_HINT[r]})`).join('; ')}.</p>
         <button onClick={addUser} className="px-4 py-2 bg-accent text-accent-contrast rounded-token text-sm font-semibold">Add account</button>
       </section>
 
-      <section className="bg-surface border border-line rounded-token p-5 mb-4 max-w-2xl">
-        <h2 className="font-semibold text-lg mb-3">Admin</h2>
-        <a href="/materials" className="text-accent underline">Manage materials & costs</a>
-        <p className="text-sm text-muted mt-1 mb-3">Cost changes only affect future quotes.</p>
-        <a href="/taxonomy" className="text-accent underline">Manage inventory categories, units & suppliers</a>
-        <p className="text-sm text-muted mt-1 mb-3">Organizes inventory; never changes pricing or the stock check.</p>
-        <button onClick={async () => {
-          const cur = prompt('Current admin password:'); if (cur === null) return;
-          const next = prompt('New admin password:'); if (!next) return;
-          try { await put('/api/admin/password', { current: cur, next }); alert('Password changed.'); }
-          catch { alert('Wrong current password.'); }
-        }} className="px-4 py-2 border border-line rounded-token text-sm hover:bg-bg">Change admin password</button>
-      </section>
-
-      </AdminGate>
+      </RoleGate>
       </div>
 
       <section className="bg-surface border border-line rounded-token p-5 max-w-lg">

@@ -4,7 +4,7 @@ import { MATERIAL_UNITS, PRICE_MODES, PRICE_MODE_LABELS, type PriceMode } from '
 import { formatCents, parseDollarsToCents } from '../../lib/format';
 import { get, post, put, del } from '../../lib/api';
 import type { Material } from '../../lib/types';
-import AdminGate from '../../components/AdminGate';
+import RoleGate from '../../components/RoleGate';
 
 const input = 'px-3 py-2.5 bg-bg border border-line rounded-token text-base';
 const small = 'px-2 py-1.5 bg-bg border border-line rounded-token text-sm';
@@ -97,7 +97,7 @@ export default function Materials() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-2">Materials & Price Book</h1>
-      <AdminGate>
+      <RoleGate min="admin">
       <p className="text-muted mb-6">Each material carries its pricing rule. "2 color" doubles, "3 color" triples (when enabled). Changes affect new quotes only.</p>
 
       <div className="bg-surface border border-line rounded-token p-4 mb-4 flex flex-wrap gap-3 items-end">
@@ -199,7 +199,7 @@ export default function Materials() {
         ))}
         {items.length === 0 && <p className="text-muted">No materials yet.</p>}
       </div>
-      </AdminGate>
+      </RoleGate>
     </div>
   );
 }

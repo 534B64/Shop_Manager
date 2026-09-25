@@ -1,7 +1,7 @@
 // Runtime smoke test. Boots the REAL API (server/app.ts) on a throwaway SQLite
 // file, runs migrations, listens on a test port, and exercises the key flows
-// over real HTTP — health, the Phase 8 stock check, admin status, and job
-// balance math. Prints PASS/FAIL per check and exits non-zero on any failure.
+// over real HTTP — health, first-run setup + sessions (ADR 0004), the Phase 8
+// stock check, and job balance math. Prints PASS/FAIL per check and exits non-zero on any failure.
 // Run via: npx tsx batch/smoke.ts   (invoked by 7-Runtime-Test.bat)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -19,9 +19,12 @@ function check(name: string, ok: boolean, extra = '') {
   else { fail++; console.log(`  FAIL  ${name}${extra ? `  (${extra})` : ''}`); }
 }
 const json = async (res: { json: () => Promise<unknown> }) => res.json() as Promise<any>;
+// Session token from first-run setup; every /api call after that carries it.
+let token = '';
+const auth = () => (token ? { authorization: `Bearer ${token}` } : {});
 const post = (url: string, body: unknown) =>
-  fetch(`${BASE}${url}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
-const getJ = (url: string) => fetch(`${BASE}${url}`).then(json);
+  fetch(`${BASE}${url}`, { method: 'POST', headers: { 'content-type': 'application/json', ...auth() }, body: JSON.stringify(body) });
+const getJ = (url: string) => fetch(`${BASE}${url}`, { headers: auth() }).then(json);
 
 const { buildApp } = await import('../server/app.js');
 const app = await buildApp();
@@ -34,9 +37,16 @@ try {
   const health = await getJ('/api/health');
   check('GET /api/health → ok', health.ok === true);
 
-  // --- Trust: admin status endpoint (Phase 7) ---
-  const admin = await getJ('/api/admin/status');
-  check('GET /api/admin/status → isDefault boolean', typeof admin.isDefault === 'boolean');
+  // --- Auth (Phase 1a, ADR 0004): locked without a session, first-run setup ---
+  const locked = await fetch(`${BASE}/api/jobs`);
+  check('GET /api/jobs without a session → 401', locked.status === 401);
+  const status = await getJ('/api/auth/status');
+  check('GET /api/auth/status on a fresh DB → needsSetup', status.needsSetup === true);
+  const setup = await json(await post('/api/auth/setup', { name: 'Smoke Admin', pin: '1234' }));
+  token = setup.token ?? '';
+  check('POST /api/auth/setup → admin session', !!token && setup.user?.role === 'admin');
+  const me = await getJ('/api/auth/me');
+  check('GET /api/auth/me → the admin', me.user?.name === 'Smoke Admin');
 
   // --- Phase 8: roll material + color + SKUs + stock check ---
   const mat = await json(await post('/api/materials', {
@@ -68,7 +78,7 @@ try {
   const clientRef = (globalThis.crypto?.randomUUID?.() ?? `smoke-${Date.now()}-${Math.random()}`);
   const job = await json(await post('/api/jobs', {
     clientRef, type: 'decal', title: 'Smoke job', status: 'acknowledged',
-    finalPriceCents: 10000, newCustomer: { name: 'Smoke Co' },
+    finalPriceCents: 10000, newCustomer: { name: 'Smoke Co', email: 'smoke@example.com' },
   }));
   check('POST /api/jobs → created with 9-digit PO', !!job.id && /^\d{9}$/.test(job.po ?? ''), job.po);
 

@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
 import { get, post, put } from '../../lib/api';
-import { currentUser } from '../../lib/session';
 import { ROLL_SIZES, VARIANCE_REASON_CODES, ADJUST_REASON_LABELS, type VarianceReasonCode } from '../../../shared/domain';
 import { buildInventoryView } from '../../../shared/inventoryView';
 import type { GroupBy, InvViewItem, SearchOp, SortBy } from '../../../shared/inventoryView';
@@ -145,7 +144,7 @@ export default function Inventory() {
     setError('');
     try {
       await post(`/api/inventory/${item.id}/adjust`, {
-        delta, reason, ...(note ? { note } : {}), ...(currentUser() ? { createdBy: currentUser()! } : {}),
+        delta, reason, ...(note ? { note } : {}),
       });
       refresh();
       if (history?.itemId === item.id) showHistory(item);
@@ -233,7 +232,6 @@ export default function Inventory() {
       }));
       const r = await post<{ itemsAdjusted: number; nextScheduledFor: string }>(`/api/cycle-counts/${cc.id}/complete`, {
         counts,
-        ...(currentUser() ? { completedBy: currentUser()! } : {}),
         ...(nextDate ? { nextScheduledFor: nextDate } : {}),
       });
       setCountPhase('off');
@@ -265,7 +263,6 @@ export default function Inventory() {
         delta, reason: 'received',
         ...(cents != null && cents > 0 ? { unitCostCents: cents } : {}),
         ...(recv.supplierId ? { supplierId: Number(recv.supplierId) } : {}),
-        ...(currentUser() ? { createdBy: currentUser()! } : {}),
       });
       setRecv(null);
       refresh();

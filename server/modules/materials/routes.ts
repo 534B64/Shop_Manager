@@ -3,6 +3,7 @@ import { eq } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { materials, jobs, jobItems, materialColors } from '../../db/schema/index.js';
 import { PRICE_MODES } from '../../../shared/domain.js';
+import { requireRole } from '../auth/index.js';
 
 const materialBody = {
   type: 'object',
@@ -33,6 +34,7 @@ export async function materialRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/materials', { schema: { body: materialBody } }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const body = req.body as { name: string; unit: string; costPerUnitCents: number };
     const [row] = await db.insert(materials).values(body).returning();
     reply.code(201);
@@ -61,6 +63,7 @@ export async function materialRoutes(app: FastifyInstance) {
       },
     },
   }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
     const [row] = await db.update(materials).set(req.body as object).where(eq(materials.id, id)).returning();
     if (!row) return reply.code(404).send({ error: 'Material not found' });
@@ -71,6 +74,7 @@ export async function materialRoutes(app: FastifyInstance) {
   // so historical quotes never lose the material they reference. Referenced materials
   // must be deactivated instead (kept on the books, hidden from new quotes).
   app.delete('/api/materials/:id', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
     const [jobRef] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.materialId, id)).limit(1);
     const [itemRef] = await db.select({ id: jobItems.id }).from(jobItems).where(eq(jobItems.materialId, id)).limit(1);
@@ -84,8 +88,8 @@ export async function materialRoutes(app: FastifyInstance) {
 
   // ---- Material colors (Phase 8) ----
   // A color is a material *variant* (Red 651 vs Blue 651). It selects which roll
-  // inventory to stock-check and never changes price. Page-level AdminGate guards
-  // the UI, matching the other materials endpoints (no API password here).
+  // inventory to stock-check and never changes price. Admin-only, like every
+  // other materials mutation (ADR 0004).
   app.get('/api/materials/:id/colors', async (req) => {
     const id = Number((req.params as { id: string }).id);
     return db.select().from(materialColors).where(eq(materialColors.materialId, id)).orderBy(materialColors.name);
@@ -95,6 +99,7 @@ export async function materialRoutes(app: FastifyInstance) {
     schema: { body: { type: 'object', required: ['name'], additionalProperties: false,
       properties: { name: { type: 'string', minLength: 1, maxLength: 60 } } } },
   }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
     const { name } = req.body as { name: string };
     const [material] = await db.select().from(materials).where(eq(materials.id, id));
@@ -110,6 +115,7 @@ export async function materialRoutes(app: FastifyInstance) {
   });
 
   app.delete('/api/materials/:id/colors/:colorId', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const colorId = Number((req.params as { colorId: string }).colorId);
     const [row] = await db.delete(materialColors).where(eq(materialColors.id, colorId)).returning();
     if (!row) return reply.code(404).send({ error: 'Color not found' });

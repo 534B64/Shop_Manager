@@ -63,23 +63,20 @@ export default function Customers() {
     if (v === null) return;
     const level = Number(v);
     if (![0, 1, 2, 3].includes(level)) return setError('Level must be 0, 1, 2, or 3.');
-    const ap = prompt('Admin password (levels are admin-assigned):');
-    if (ap === null) return;
-    try { await put(`/api/customers/${sel.id}/level`, { level, adminPassword: ap }); open(sel.id); }
-    catch { setError('Wrong admin password.'); }
+    try { await put(`/api/customers/${sel.id}/level`, { level }); open(sel.id); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Level change failed.'); }
   }
 
   async function removeCustomer() {
     if (!sel) return;
     if (sel.jobs.length > 0) return setError('This customer has order history — it cannot be removed (the books stay intact).');
-    const ap = prompt(`Admin password to remove "${sel.name}"?`);
-    if (ap === null) return;
+    if (!confirm(`Remove "${sel.name}"? This cannot be undone.`)) return;
     setError('');
     try {
-      await del(`/api/customers/${sel.id}`, { adminPassword: ap });
+      await del(`/api/customers/${sel.id}`, {});
       setSel(null);
       refreshList(q.trim());
-    } catch (e) { setError(e instanceof Error ? e.message : 'Remove failed (wrong admin password?)'); }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Remove failed'); }
   }
 
   return (

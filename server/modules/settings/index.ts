@@ -1,4 +1,4 @@
 // Settings module interface (ADR 0003): routes + the shared reads other
-// modules are allowed to use, including the admin gate.
+// modules are allowed to use. The admin gate moved to modules/auth (ADR 0004).
 export { settingsRoutes } from './routes.js';
-export { getSetting, setSetting, requireAdmin, taxRatePct } from './service.js';
+export { getSetting, setSetting, taxRatePct } from './service.js';

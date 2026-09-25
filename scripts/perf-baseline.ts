@@ -60,6 +60,13 @@ const median = (xs: number[]) => {
 
 const { buildApp } = await import('../server/app.js');
 const app = await buildApp();
+// Every /api route needs a session (ADR 0004) — sign in as the first active admin.
+const { db } = await import('../server/db/index.js');
+const { users } = await import('../server/db/schema/index.js');
+const { createSession } = await import('../server/modules/auth/index.js');
+const admin = (await db.select().from(users)).find((u) => u.active && u.role === 'admin');
+if (!admin) { console.error('perf:baseline: no active admin in this DB — seed it with db:seed:perf first.'); process.exit(1); }
+const authHeader = { authorization: `Bearer ${await createSession(admin.id)}` };
 await app.ready();
 
 interface Result { probe: Probe; ms: number; kb: number; rows: string; status: number }
@@ -68,7 +75,7 @@ const results: Result[] = [];
 for (const probe of PROBES) {
   const run = async () => {
     const t = performance.now();
-    const res = await app.inject({ method: 'GET', url: probe.url });
+    const res = await app.inject({ method: 'GET', url: probe.url, headers: authHeader });
     return { ms: performance.now() - t, res };
   };
   await run(); // warm-up (statement cache, JIT) — not counted

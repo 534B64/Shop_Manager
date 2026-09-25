@@ -4,6 +4,7 @@ import { db } from '../../db/index.js';
 import { payments, jobs, customers, customerCredits } from '../../db/schema/index.js';
 import { creditBalanceCents } from './service.js';
 import { recordSale } from '../inventory/index.js';
+import { requireApproval, approvalSchema } from '../auth/index.js';
 
 export const PAYMENT_METHODS = ['cash', 'check', 'card', 'credit', 'other'] as const;
 
@@ -43,18 +44,22 @@ export async function paymentRoutes(app: FastifyInstance) {
           amountCents: { type: 'integer', minimum: 1 },
           method: { type: 'string', enum: [...PAYMENT_METHODS] },
           kind: { type: 'string', enum: ['payment', 'refund'] },
-          createdBy: { type: 'string', maxLength: 60 },
           note: { type: 'string', maxLength: 500 },
+          approval: approvalSchema, // refunds only (ADR 0004)
         },
       },
     },
   }, async (req, reply) => {
-    const body = req.body as { clientRef: string; jobId: number; amountCents: number; method: string; kind?: 'payment' | 'refund'; createdBy?: string; note?: string };
+    const { approval: _approval, ...body } = req.body as { clientRef: string; jobId: number; amountCents: number; method: string; kind?: 'payment' | 'refund'; note?: string; approval?: unknown };
     const kind = body.kind ?? 'payment';
     const [existing] = await db.select().from(payments).where(eq(payments.clientRef, body.clientRef));
     if (existing) return existing;
     const [job] = await db.select().from(jobs).where(eq(jobs.id, body.jobId));
     if (!job) return reply.code(400).send({ error: 'Unknown job' });
+    // Money going back out needs a manager (after the idempotency return, so a
+    // wifi retry of an approved refund never asks twice or logs twice).
+    if (kind === 'refund' && !(await requireApproval(req, reply, { action: 'payment.refund', entity: 'job', entityId: job.id,
+      reason: body.note ?? null, details: { amountCents: body.amountCents, method: body.method, clientRef: body.clientRef } }))) return reply;
 
     if (body.method === 'credit') {
       if (!job.customerId) return reply.code(400).send({ error: 'Job has no customer — credit needs an account' });
@@ -74,21 +79,24 @@ export async function paymentRoutes(app: FastifyInstance) {
       }
     }
 
-    const [row] = await db.insert(payments).values({ ...body, kind }).returning();
+    const [row] = await db.insert(payments).values({ ...body, kind, createdBy: req.user!.name }).returning();
     reply.code(201);
     return row;
   });
 
   // Void = mistake correction. Row stays, balance ignores it, credit is restored.
+  // Manager approval (ADR 0004).
   app.post('/api/payments/:id/void', {
     schema: { body: { type: 'object', required: ['reason'], additionalProperties: false,
-      properties: { reason: { type: 'string', minLength: 1, maxLength: 300 } } } },
+      properties: { reason: { type: 'string', minLength: 1, maxLength: 300 }, approval: approvalSchema } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const { reason } = req.body as { reason: string };
     const [p] = await db.select().from(payments).where(eq(payments.id, id));
     if (!p) return reply.code(404).send({ error: 'Payment not found' });
     if (p.voidedAt) return reply.code(409).send({ error: 'Already voided' });
+    if (!(await requireApproval(req, reply, { action: 'payment.void', entity: 'payment', entityId: p.id,
+      reason, details: { jobId: p.jobId, amountCents: p.amountCents, kind: p.kind, method: p.method } }))) return reply;
 
     if (p.method === 'credit') {
       const [job] = await db.select().from(jobs).where(eq(jobs.id, p.jobId));
@@ -200,7 +208,6 @@ export async function paymentRoutes(app: FastifyInstance) {
           amountCents: { type: 'integer', minimum: 1 },
           method: { type: 'string', enum: ['cash', 'check', 'card', 'other'] },
           customerId: { type: 'integer' },
-          createdBy: { type: 'string', maxLength: 60 },
           // Optional "from stock" link (2026-07-07): when the counter sale is
           // a stocked item, deduct it from inventory. qty is in COUNT units.
           inventoryItemId: { type: 'integer' },
@@ -209,17 +216,17 @@ export async function paymentRoutes(app: FastifyInstance) {
       },
     },
   }, async (req, reply) => {
-    const body = req.body as { clientRef: string; title: string; amountCents: number; method: string; customerId?: number; createdBy?: string; inventoryItemId?: number; stockQty?: number };
+    const body = req.body as { clientRef: string; title: string; amountCents: number; method: string; customerId?: number; inventoryItemId?: number; stockQty?: number };
     const [existing] = await db.select().from(jobs).where(eq(jobs.clientRef, body.clientRef));
     if (existing) return existing;
     const [job] = await db.insert(jobs).values({
       clientRef: body.clientRef, type: 'retail', title: body.title,
       status: 'picked_up', finalPriceCents: body.amountCents, totalCents: body.amountCents,
-      customerId: body.customerId ?? null, createdBy: body.createdBy ?? null,
+      customerId: body.customerId ?? null, createdBy: req.user!.name,
     }).returning();
     await db.insert(payments).values({
       clientRef: body.clientRef + ':pay', jobId: job.id,
-      amountCents: body.amountCents, method: body.method,
+      amountCents: body.amountCents, method: body.method, createdBy: req.user!.name,
     });
     // Counter-sale deduction — the ONE tracked-sale write into inventory
     // (weekly cycle counts reconcile everything else). Sits after the
@@ -228,7 +235,7 @@ export async function paymentRoutes(app: FastifyInstance) {
     if (body.inventoryItemId != null) {
       try {
         await recordSale({ itemId: body.inventoryItemId, qty: body.stockQty ?? 1,
-          title: body.title, jobId: job.id, createdBy: body.createdBy ?? null });
+          title: body.title, jobId: job.id, createdBy: req.user!.name });
       } catch { /* the sale stands even if the deduction fails */ }
     }
     reply.code(201);

@@ -3,7 +3,7 @@ import { like, desc, eq, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { customers, jobs, customerCredits } from '../../db/schema/index.js';
 import { creditBalanceCents } from '../payments/index.js';
-import { requireAdmin } from '../settings/index.js';
+import { requireRole, requireApproval, approvalSchema } from '../auth/index.js';
 
 export async function customerRoutes(app: FastifyInstance) {
   // List with last-purchase date; client flags accounts idle > 30 days.
@@ -88,31 +88,33 @@ export async function customerRoutes(app: FastifyInstance) {
     return row;
   });
 
-  // Levels are admin-assigned only.
+  // Levels (discount tiers) are manager-assigned (ADR 0004).
   app.put('/api/customers/:id/level', {
-    schema: { body: { type: 'object', required: ['level', 'adminPassword'], additionalProperties: false,
-      properties: { level: { type: 'integer', minimum: 0, maximum: 3 }, adminPassword: { type: 'string' } } } },
+    schema: { body: { type: 'object', required: ['level'], additionalProperties: false,
+      properties: { level: { type: 'integer', minimum: 0, maximum: 3 } } } },
   }, async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
     const id = Number((req.params as { id: string }).id);
-    const { level, adminPassword } = req.body as { level: number; adminPassword: string };
-    if (!(await requireAdmin(adminPassword))) return reply.code(401).send({ error: 'Admin password required' });
+    const { level } = req.body as { level: number };
     const [row] = await db.update(customers).set({ level }).where(eq(customers.id, id)).returning();
     if (!row) return reply.code(404).send({ error: 'Customer not found' });
     return row;
   });
 
-  // Remove a customer with the admin password. Blocked if they have any order
+  // Remove a customer — manager approval (ADR 0004). Blocked if they have any order
   // history — those rows are the books and must stay; only clean/duplicate/mistake
   // accounts (no jobs) can be removed. Their credit ledger is cleared with them.
   app.delete('/api/customers/:id', {
-    schema: { body: { type: 'object', required: ['adminPassword'], additionalProperties: false,
-      properties: { adminPassword: { type: 'string' } } } },
+    schema: { body: { type: ['object', 'null'], additionalProperties: false,
+      properties: { approval: approvalSchema } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { adminPassword } = req.body as { adminPassword: string };
-    if (!(await requireAdmin(adminPassword))) return reply.code(401).send({ error: 'Admin password required' });
+    const [customer] = await db.select().from(customers).where(eq(customers.id, id));
+    if (!customer) return reply.code(404).send({ error: 'Customer not found' });
     const [jobRef] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.customerId, id)).limit(1);
     if (jobRef) return reply.code(409).send({ error: 'This customer has order history — it cannot be removed (the books stay intact).' });
+    if (!(await requireApproval(req, reply, { action: 'customer.delete', entity: 'customer', entityId: id,
+      details: { name: customer.name } }))) return reply;
     await db.delete(customerCredits).where(eq(customerCredits.customerId, id));
     const [row] = await db.delete(customers).where(eq(customers.id, id)).returning();
     if (!row) return reply.code(404).send({ error: 'Customer not found' });
@@ -120,11 +122,13 @@ export async function customerRoutes(app: FastifyInstance) {
   });
 
   // Manual credit adjustment: + grant (goodwill, prepay), − correction.
+  // Store credit is money — manager approval (ADR 0004).
   app.post('/api/customers/:id/credit', {
     schema: { body: { type: 'object', required: ['deltaCents'], additionalProperties: false,
       properties: {
         deltaCents: { type: 'integer' },
         note: { type: 'string', maxLength: 300 },
+        approval: approvalSchema,
       } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
@@ -134,6 +138,8 @@ export async function customerRoutes(app: FastifyInstance) {
     if (!customer) return reply.code(404).send({ error: 'Customer not found' });
     const bal = await creditBalanceCents(id);
     if (bal + deltaCents < 0) return reply.code(409).send({ error: `Credit cannot go negative (current ${(bal / 100).toFixed(2)})` });
+    if (!(await requireApproval(req, reply, { action: 'customer.credit_adjust', entity: 'customer', entityId: id,
+      reason: note ?? null, details: { deltaCents } }))) return reply;
     await db.insert(customerCredits).values({ customerId: id, deltaCents, note: note ?? null });
     return { creditCents: bal + deltaCents };
   });

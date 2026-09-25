@@ -1,7 +1,5 @@
-import { useEffect, useState } from 'react';
 import { NavLink, Outlet } from 'react-router-dom';
-import { currentUser, setSession, isCounterMode } from '../lib/session';
-import { get } from '../lib/api';
+import { sessionUser, signOut } from '../lib/session';
 
 const navItems = [
   { to: '/', label: 'Dashboard', end: true },
@@ -15,16 +13,7 @@ const navItems = [
 ];
 
 export default function Layout() {
-  // Trust nag: warn (don't block) while the admin password is still the default.
-  // Hidden in counter mode so it never shows on customer-facing screens.
-  const [defaultAdminPw, setDefaultAdminPw] = useState(false);
-  useEffect(() => {
-    if (isCounterMode()) return;
-    get<{ isDefault: boolean }>('/api/admin/status')
-      .then((s) => setDefaultAdminPw(s.isDefault))
-      .catch(() => {});
-  }, []);
-
+  const me = sessionUser();
   return (
     <div className="min-h-screen flex app-chrome">
       <aside className="w-52 shrink-0 border-r border-line bg-surface flex flex-col">
@@ -52,22 +41,14 @@ export default function Layout() {
           ))}
         </nav>
         <div className="p-4 text-xs text-muted border-t border-line">
-          <div className="mb-1">Signed in: <b className="text-ink">{currentUser()}</b></div>
-          <button className="underline" onClick={() => { setSession(null); location.reload(); }}>Switch user</button>
+          <div className="mb-1">Signed in: <b className="text-ink">{me?.name}</b>{me && <span> · {me.role}</span>}</div>
+          <button className="underline" onClick={async () => { await signOut(); location.reload(); }}>Switch user</button>
           <div className="mt-2">v0.10.0</div>
         </div>
       </aside>
       {/* No max-width cap — pages size to the window. Dense pages go full
           width; forms/modals keep their own sane caps. */}
       <main className="flex-1 p-6 min-w-0">
-        {defaultAdminPw && (
-          <div className="mb-4 rounded-token border border-amber-400 bg-amber-50 text-amber-900 px-4 py-3 text-sm flex items-center justify-between gap-3">
-            <span>
-              The admin password is still the default <code className="font-mono">admin</code>. Anyone can change shop settings, prices, and accounts until you set a new one.
-            </span>
-            <NavLink to="/settings" className="shrink-0 underline font-semibold">Change it</NavLink>
-          </div>
-        )}
         <Outlet />
       </main>
     </div>

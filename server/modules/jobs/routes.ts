@@ -2,9 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { eq, desc, isNull, and } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { jobs, customers, materials, jobItems } from '../../db/schema/index.js';
-import { verifyUser } from '../users/index.js';
 import { paidNetCents, livePaymentCount } from '../payments/index.js';
-import { requireAdmin } from '../settings/index.js';
+import { requireApproval, approvalSchema } from '../auth/index.js';
 import { JOB_TYPES, type JobStatus } from '../../../shared/domain.js';
 import { canTransition } from '../../../shared/statusFlow.js';
 import { baseQuery } from './queries.js';
@@ -42,7 +41,6 @@ const createBody = {
     rollWidthIn: { type: 'number', exclusiveMinimum: 0 },
     tags: { type: 'string', maxLength: 300 },
     fileRef: { type: 'string', maxLength: 400 },
-    createdBy: { type: 'string', maxLength: 60 },
     taxable: { type: 'boolean' },
     discountPct: { type: 'number', minimum: 0, maximum: 100 },
     totalCents: { type: 'integer', minimum: 0 },
@@ -82,7 +80,6 @@ interface CreateJobBody {
   rollWidthIn?: number;
   tags?: string;
   fileRef?: string;
-  createdBy?: string;
   taxable?: boolean;
   discountPct?: number;
   totalCents?: number;
@@ -162,7 +159,7 @@ export async function jobRoutes(app: FastifyInstance) {
         type: body.type,
         tags: body.tags ?? null,
         fileRef: body.fileRef ?? null,
-        createdBy: body.createdBy ?? null,
+        createdBy: req.user!.name, // attribution is the session, never the body
         taxable: body.taxable ?? true,
         discountPct: body.discountPct ?? null,
         // Server-computed total (only when the client derived one — callers
@@ -203,10 +200,10 @@ export async function jobRoutes(app: FastifyInstance) {
     schema: { body: { type: 'object', required: ['status'], additionalProperties: false,
       properties: {
         status: { type: 'string' },
-        adminPassword: { type: 'string' },
-        // Who used the override — the signed-in account name, so an unpaid
-        // pickup is attributable to a person, not just "knew the admin password".
-        overrideBy: { type: 'string', maxLength: 60 },
+        // Unpaid pickup: the client first gets a 402 with the balance, confirms,
+        // then retries with override:true (+ approval when a cashier asks).
+        override: { type: 'boolean' },
+        approval: approvalSchema,
       } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
@@ -217,21 +214,25 @@ export async function jobRoutes(app: FastifyInstance) {
       return reply.code(409).send({ error: `Cannot move from '${job.status}' to '${to}'` });
     }
     const patch: Record<string, unknown> = { status: to };
-    // No pickup without payment — unless an admin overrides.
+    // No pickup without payment — unless a manager approves the override.
     if (to === 'picked_up') {
       const paidNet = await paidNetCents(id);
       const owed = (job.totalCents ?? job.finalPriceCents ?? 0) - paidNet;
       if (owed > 0) {
-        const { adminPassword: ap, overrideBy } = req.body as { adminPassword?: string; overrideBy?: string };
-        if (!(await requireAdmin(ap))) {
-          return reply.code(402).send({ error: `Balance due: $${(owed / 100).toFixed(2)}. Admin override required.` });
+        const { override } = req.body as { override?: boolean };
+        if (!override) {
+          return reply.code(402).send({ error: `Balance due: ${(owed / 100).toFixed(2)}. Manager override required.`, owedCents: owed });
         }
+        const approver = await requireApproval(req, reply, { action: 'job.pickup_unpaid', entity: 'job', entityId: id,
+          details: { owedCents: owed } });
+        if (!approver) return reply;
         // Attributable audit line — appended to the job's notes so it's visible
         // wherever the job is, and survives in the same backup as the books.
-        const who = overrideBy?.trim() || 'unknown account';
-        const line = `[${new Date().toISOString().slice(0, 10)}] Picked up with $${(owed / 100).toFixed(2)} balance due — admin override by ${who}.`;
+        // The approvals row is the authoritative record.
+        const who = approver.id === req.user!.id ? approver.name : `${approver.name} (for ${req.user!.name})`;
+        const line = `[${new Date().toISOString().slice(0, 10)}] Picked up with ${(owed / 100).toFixed(2)} balance due — manager override by ${who}.`;
         patch.notes = job.notes ? `${job.notes}\n${line}` : line;
-        req.log.warn({ jobId: id, owedCents: owed, overrideBy: who }, 'pickup-with-balance-due admin override');
+        req.log.warn({ jobId: id, owedCents: owed, approvedBy: approver.name }, 'pickup-with-balance-due manager override');
       }
     }
     await db.update(jobs).set(patch).where(eq(jobs.id, id));
@@ -239,15 +240,13 @@ export async function jobRoutes(app: FastifyInstance) {
     return row;
   });
 
-  // Full edit — requires an account password. Items are replaced wholesale.
+  // Full edit — any signed-in account (the session is the attribution; it
+  // replaced the per-edit account password, ADR 0004). Items are replaced wholesale.
   app.put('/api/jobs/:id', {
-    schema: { body: { type: 'object', required: ['editorName', 'editorPassword'], additionalProperties: true } },
+    schema: { body: { type: 'object', additionalProperties: true } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const b = req.body as Record<string, unknown> & { editorName: string; editorPassword: string };
-    if (!(await verifyUser(b.editorName, b.editorPassword))) {
-      return reply.code(401).send({ error: 'Wrong account password' });
-    }
+    const b = req.body as Record<string, unknown>;
     const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
     if (!job || job.deletedAt) return reply.code(404).send({ error: 'Job not found' });
 
@@ -308,19 +307,19 @@ export async function jobRoutes(app: FastifyInstance) {
     return { ...row, items, ...(priceCheck ? { priceCheck } : {}) };
   });
 
-  // Soft delete — picked-up jobs only, account password required. Payments stay.
+  // Soft delete — manager approval (ADR 0004). Payments stay.
   app.delete('/api/jobs/:id', {
-    schema: { body: { type: 'object', required: ['editorName', 'editorPassword'], additionalProperties: false,
-      properties: { editorName: { type: 'string' }, editorPassword: { type: 'string' } } } },
+    schema: { body: { type: ['object', 'null'], additionalProperties: false,
+      properties: { approval: approvalSchema } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { editorName, editorPassword } = req.body as { editorName: string; editorPassword: string };
-    if (!(await verifyUser(editorName, editorPassword))) return reply.code(401).send({ error: 'Wrong account password' });
     const [job] = await db.select().from(jobs).where(eq(jobs.id, id));
     if (!job || job.deletedAt) return reply.code(404).send({ error: 'Job not found' });
     // Removable only while no money has been taken. Once a live (non-voided)
     // payment exists, the order is corrected by voiding/refunding — never deleted.
     if ((await livePaymentCount(id)) > 0) return reply.code(409).send({ error: 'This order has payments — void or refund them first, then remove.' });
+    if (!(await requireApproval(req, reply, { action: 'job.delete', entity: 'job', entityId: id,
+      details: { po: job.po, title: job.title } }))) return reply;
     await db.update(jobs).set({ deletedAt: new Date().toISOString() }).where(eq(jobs.id, id));
     return { ok: true };
   });

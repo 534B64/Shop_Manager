@@ -23,11 +23,11 @@ that touched no files.
 - **SQLite via Drizzle ORM** (`@libsql/client`), chosen over Postgres/MySQL: one small team on a flaky LAN, and a single `.db` file rides the shop's existing NAS → cloud backup pipeline for free.
 - **WAL journal mode + foreign keys** turned on at boot so multiple counter PCs can read while one writes without locking each other out.
 - **App factory pattern** (`server/app.ts` builds and registers routes but doesn't `listen()`) — the real server and the integration test suite build from the same function, so tests exercise identical wiring.
-- **Domain modules (2026-07-03 reorg).** Server code lives in `server/modules/<domain>/` (jobs, payments, customers, materials, inventory, settings, users), each with `routes.ts` (+ `service.ts`/`queries.ts` where warranted) behind an `index.ts` that is the module's **only** import surface (ADR 0001). Money math is payments-owned (ADR 0002); the admin gate is settings-owned, account verification users-owned (ADR 0003). Client pages group under `src/modules/<domain>/` (whole files, no JSX changes).
+- **Domain modules (2026-07-03 reorg).** Server code lives in `server/modules/<domain>/` (auth, jobs, payments, customers, materials, inventory, settings, users), each with `routes.ts` (+ `service.ts`/`queries.ts` where warranted) behind an `index.ts` that is the module's **only** import surface (ADR 0001). Money math is payments-owned (ADR 0002); settings reads are settings-owned (ADR 0003); sessions, roles, and manager approvals are auth-owned (ADR 0004). Client pages group under `src/modules/<domain>/` (whole files, no JSX changes).
 - **Migrations are checked into git** and run automatically at every `buildApp()` call, so a fresh SQLite file always comes up clean.
 - **Idempotent mutations for sketchy wifi.** Job and payment creation take a client-generated UUID (`clientRef`); POSTing the same ref twice returns the original row instead of duplicating it. `src/lib/api.ts` retries on network failure only, never on HTTP error responses.
 - **Money as integer cents** everywhere in the schema and pricing math.
-- **Plain-text passwords, on purpose.** Both account and admin passwords are stored as plain text — this is a LAN tool gating *actions* and *config*, not a security boundary.
+- **Roles, sessions, manager approval (Phase 1a, 2026-09-25 — ADR 0004).** Per-user roles cashier/manager/admin with scrypt-hashed PINs (node:crypto); server sessions (sha256-hashed bearer token, 12 h sliding idle, 7-day cap); a root `onRequest` hook 401s every `/api` route except health + sign-in. Configuration is `requireRole`-gated; money/override actions are `requireApproval`-gated (a manager acts alone or types their name + PIN for a cashier) and log to the append-only `approvals` table. Attribution comes from the session, never the body. The shared admin password and all plaintext passwords are gone (startup upgrade hashes legacy passwords once). Login rate limit: 10 failures / name / 5 min.
 - **Soft deletes only for money-adjacent rows.** Jobs are soft-deleted (only when unpaid); payments are never deleted, only voided with a required reason; refunds are their own rows.
 - **Docker multi-stage build** with the SQLite file and design-file references on a mounted volume so the container itself is disposable.
 
@@ -45,20 +45,23 @@ that touched no files.
 - **materialColors** — admin-managed color list per roll material; a color is a material *variant*, never a price input.
 - **inventoryAdjustments** — every count change is a logged, reason-coded delta. Since 2026-07-09: receipts carry `unitCostCents` (per purchase unit) + `supplierId` (the per-receipt cost history behind the cost-trend view), count-session rows carry `cycleCountId`, and the reason enum grew `sold` + the variance reason codes (see `ADJUST_REASONS` in `shared/domain.ts`).
 - **cycleCounts / cycleCountLines** — scheduled count sessions; completing one auto-queues the next (chosen date, else +7 days) so the weekly rhythm never depends on memory (2026-07-01). Since 2026-07-09 a session records `completedBy` and writes one immutable `cycleCountLines` snapshot per counted item (system count, counted qty, cost snapshot, reason code, note) — the data behind variance review and the per-item variance trend.
-- **users** — LAN accounts with plain-text passwords, per-account JSON `prefs`.
-- **settings** — generic key/value table backing tax rate, pricing tuning, unit-type list, level discounts, admin password.
+- **users** — accounts with `role` (cashier/manager/admin, CHECK-constrained), `pinHash` (scrypt), active flag, per-account JSON `prefs`. The legacy plaintext `password` column is kept for migration history only and NULLed by the startup upgrade (migration `0013`).
+- **sessions** — sha256 of the bearer token (PK), user, created / last-seen / expires / revoked timestamps (`0013`).
+- **approvals** — append-only (UPDATE/DELETE triggers) log of every manager-approved action: action, entity, entity id, requested by, approved by, reason, details JSON (`0013`).
+- **settings** — generic key/value table backing tax rate, unit-type list, level discounts, inventory knobs. (The `adminPassword` row was deleted by `0013`.)
 
 ### API surface (`server/modules/<domain>/`)
 
-- **modules/jobs** — search + idempotent create (auto-PO), full edit/soft-delete (account-password gated), status transitions (lifecycle-rule-enforced; pickup-with-balance-due blocked unless admin override, and every override is stamped onto the job's notes with the signed-in account name), quote→order conversion. **Server-side quote-math verification (2026-07-01):** create/edit recomputes the suggested total (`shared/priceVerify.ts` + material rules) and the grand total (tax → after-tax discount) and stores the server's answer; a mismatch returns a non-blocking `priceCheck` warning. File uploads are gone — `fileRef` (NAS-path text) is the only design-file mechanism (ROADMAP §C).
-- **modules/materials** — price-book CRUD, hard-delete guard (refuses removal if referenced by any job), nested color-list CRUD.
-- **modules/inventory** — item CRUD (incl. supplier/UOM/Min–Max fields), reason-coded `/adjust` (receiving persists per-receipt cost + supplier), cycle-count v2 completion (blind-count reconciliation: per-item snapshot lines, server-enforced reason codes above the configurable variance threshold, one-shot lock, avg-daily-usage recompute, auto-queues the next session), needs-ordering view (`/api/inventory/reorder`, urgency-sorted with supplier lead time + days-until-stockout), `/api/inventory/usage` (count-derived rates — replaced the manual-tap trends 2026-07-09), `/api/inventory/valuation`, per-item `/cost-history` and `/variances` (with the repeated-variance signal), roll-SKU create/list (color validated against the material's color list; duplicates blocked by the DB unique index from migration `0011`), advisory `/api/stock-check` + batched `/api/stock-check/batch` (one request covers every quote line), `/api/dashboard` low-stock summary. Interface exports `recordSale` — the one inventory write other modules may call (payments' counter-sale deduction).
-- **modules/inventory (suppliers.routes.ts)** — supplier CRUD; hard delete admin-gated and blocked while receipts reference the supplier (deactivate instead).
-- **modules/customers** — search, full account view (profile + credit + history), admin-gated level assignment, delete blocked if order history exists. New customers require a valid email (2026-07-02); the generic `Walk-in` record is the sole exemption.
-- **modules/payments** — recording (incl. `credit` as a method drawing down store credit), void, `/api/balances`, date-range summary + CSV exports, `/api/pos/sale` for counter sales — optionally linked to an inventory item (`inventoryItemId`+`stockQty`), which deducts stock on the sale (reason `sold`, idempotent under `clientRef` retries, clamps at zero, never blocks the sale). Interface also exports `creditBalanceCents` / `paidNetCents` / `livePaymentCount` — the only money math other modules may call (ADR 0002).
-- **modules/settings** — tax rate, unit-type list, per-level discounts, inventory knobs (`/api/settings/inventory`: variance thresholds ±% / ±units + reorder buffer days). Interface also exports `getSetting`/`setSetting`/`requireAdmin`/`taxRatePct` — the one admin-gate implementation (ADR 0003).
-- **modules/users** — account list/create/deactivate, sign-in verification (`verifyUser` exported for jobs' edit/delete gates), prefs save, non-blocking default-admin-password flag.
-- **modules/inventory (categories.routes.ts)** — category + size-list CRUD, admin-gated delete (clears references, doesn't cascade). Categories folded into the inventory module (inventory-only by decision).
+- **modules/jobs** — search + idempotent create (auto-PO), full edit (any signed-in account) / soft-delete (manager approval), status transitions (lifecycle-rule-enforced; pickup-with-balance-due returns 402, then needs a manager-approved override — stamped onto the job's notes with approver + requester and logged to `approvals`), quote→order conversion. **Server-side quote-math verification (2026-07-01):** create/edit recomputes the suggested total (`shared/priceVerify.ts` + material rules) and the grand total (tax → after-tax discount) and stores the server's answer; a mismatch returns a non-blocking `priceCheck` warning. File uploads are gone — `fileRef` (NAS-path text) is the only design-file mechanism (ROADMAP §C).
+- **modules/auth** (2026-09-25, ADR 0004) — `/api/auth/login`, `/logout`, `/me`, public `/status` (sign-in account picker + `needsSetup`) and first-run `/setup` (creates the first admin only while none can sign in); the root auth hook; `requireRole` / `requireApproval`; the plaintext-password startup upgrade.
+- **modules/materials** — price-book CRUD (admin-only), hard-delete guard (refuses removal if referenced by any job), nested color-list CRUD.
+- **modules/inventory** — item CRUD (incl. supplier/UOM/Min–Max fields), reason-coded `/adjust` (receiving persists per-receipt cost + supplier; any non-receipt adjustment needs manager approval), cycle-count v2 completion (blind-count reconciliation: per-item snapshot lines, server-enforced reason codes above the configurable variance threshold, one-shot lock, avg-daily-usage recompute, auto-queues the next session), needs-ordering view (`/api/inventory/reorder`, urgency-sorted with supplier lead time + days-until-stockout), `/api/inventory/usage` (count-derived rates — replaced the manual-tap trends 2026-07-09), `/api/inventory/valuation`, per-item `/cost-history` and `/variances` (with the repeated-variance signal), roll-SKU create/list (color validated against the material's color list; duplicates blocked by the DB unique index from migration `0011`), advisory `/api/stock-check` + batched `/api/stock-check/batch` (one request covers every quote line), `/api/dashboard` low-stock summary. Interface exports `recordSale` — the one inventory write other modules may call (payments' counter-sale deduction).
+- **modules/inventory (suppliers.routes.ts)** — supplier CRUD (manager+); hard delete admin-only and blocked while receipts reference the supplier (deactivate instead).
+- **modules/customers** — search, full account view (profile + credit + history), manager-only level assignment, manager-approved delete (blocked if order history exists) and manager-approved store-credit adjustments. New customers require a valid email (2026-07-02); the generic `Walk-in` record is the sole exemption.
+- **modules/payments** — recording (incl. `credit` as a method drawing down store credit), void and refund (both manager-approved), `/api/balances`, date-range summary + CSV exports, `/api/pos/sale` for counter sales — optionally linked to an inventory item (`inventoryItemId`+`stockQty`), which deducts stock on the sale (reason `sold`, idempotent under `clientRef` retries, clamps at zero, never blocks the sale). Interface also exports `creditBalanceCents` / `paidNetCents` / `livePaymentCount` — the only money math other modules may call (ADR 0002).
+- **modules/settings** — tax rate, unit-type list, per-level discounts, inventory knobs (`/api/settings/inventory`: variance thresholds ±% / ±units + reorder buffer days). Writes are admin-only (unit list: manager). Interface exports `getSetting`/`setSetting`/`taxRatePct` (ADR 0003).
+- **modules/users** — account list; admin create (name + role + PIN), role change, PIN reset, deactivate/reactivate (never delete) with a last-active-admin guard; own PIN change (current PIN required); own prefs save.
+- **modules/inventory (categories.routes.ts)** — category + size-list CRUD (manager+), admin-only delete (clears references, doesn't cascade). Categories folded into the inventory module (inventory-only by decision).
 
 ### Shared business logic (`shared/`)
 
@@ -74,27 +77,28 @@ that touched no files.
 
 ### Frontend (`src/` — domain pages under `src/modules/<domain>/`, app chrome in `src/pages` + `src/components` + `src/lib`)
 
-- **App.tsx / Layout.tsx** — gated SPA with a persistent nav sidebar and a non-blocking default-admin-password warning banner; main content area is fluid (no max-width cap) so pages size to the window.
-- **SignIn.tsx** — tap-a-name-then-type-password flow, applies the account's saved theme/dashboard prefs on success.
-- **AdminGate.tsx** — reusable component locking any section behind the shop admin password, session-cached.
+- **App.tsx / Layout.tsx** — session-gated SPA (any 401 drops back to sign-in; role refreshed from `/api/auth/me` on load) with a persistent nav sidebar showing the signed-in name + role; mounts the shared Manager-approval dialog; main content area is fluid (no max-width cap) so pages size to the window.
+- **SignIn.tsx** — tap-a-name-then-type-PIN flow against `/api/auth/login` (first-run "create the owner admin" form when `needsSetup`), applies the account's saved theme/dashboard prefs on success.
+- **ApprovalDialog.tsx** — the one Manager-approval dialog (manager name + PIN + optional reason); `lib/api.ts` opens it on any 403 `approval_required` and retries the request with `approval` attached.
+- **RoleGate.tsx** — hides role-restricted sections (replaced the shared-password AdminGate 2026-09-25); server enforces regardless.
 - **Dashboard.tsx** — one-screen "what's due, what's owed, what's low," three toggleable per-account cards, Owed hidden in counter mode.
 - **Quotes.tsx** — autosaved draft, independently-priced multi-line items, tap-to-assign color tags, roll auto-select with override, live stock-check on **every line** (per-item color picker, one batched request), a non-blocking notice when the server corrects stale quote math, browser-print quote.
 - **Orders.tsx** — Kanban board with color-coded phase columns, click-through detail modal → edit form. Proof columns (Quote/Approved/Design) are all-or-nothing: if any active job is in the proof flow all three render, so advancing a job visibly moves its card; with none, the simple 5-column board returns. Cards and history show the **after-tax total** (`totalCents`, falling back to pre-tax price); the detail modal shows a read-only "Total (with tax)" that the server recomputes on any money edit.
-- **Pos.tsx (Payments)** — recording, void, refund (cash/check/card/store-credit), sales reporting + CSV. Recording more than the balance due triggers a confirm (warn-but-allow, decided 2026-07-02).
+- **Pos.tsx (Payments)** — recording, void, refund (cash/check/card/store-credit; void/refund prompt a cashier for manager approval), sales reporting + CSV (downloaded via authenticated fetch). Recording more than the balance due triggers a confirm (warn-but-allow, decided 2026-07-02).
 - **QuickOrder.tsx** — minimal counter-sale flow, Walk-in one-tap; optional "from stock" picker per sale (typeahead over inventory) that deducts on ring-up — free-text sales stay untracked and reconcile at the weekly count.
 - **Inventory.tsx** — search/filter/group/sort with per-row stock-status dots (in stock / low / out) + OUT chip, on-hand valuation line, per-item adjust-with-reason, **blind cycle count v2** (entry hides system counts and groups by category for the shop walk; review sorts variances by dollar impact and requires reason codes above threshold; submit locks), receiving form (qty in purchase units × factor, cost per purchase unit, supplier, who), per-item editor (supplier / UOM / Min with AUTO suggestion / Max), needs-ordering + usage views, and a Log modal with count-variance history (repeated-variance banner), per-receipt cost trend, and the adjustment ledger.
-- **Materials.tsx** — price-book admin + roll-color-list manager.
-- **Taxonomy.tsx** — inventory taxonomy admin (unit types + smart categories/sizes + suppliers with lead time), AdminGate-wrapped at `/taxonomy`, linked from Settings → Admin (moved out of Settings 2026-07-02; suppliers added 2026-07-09 — category default vendor is now a supplier dropdown).
-- **Customers.tsx** — search, account detail, printable order history, admin-gated level assignment.
-- **Settings.tsx** — theme picker (per-account), admin-gated tax/level-discount tuning + inventory knobs (variance thresholds, reorder buffer days), account management, admin password change. The Admin section links out to `/materials` and `/taxonomy` (taxonomy admin moved to its own page 2026-07-02; complexity tuning removed the same day).
-- **lib/api.ts** — fetch wrapper retrying only on network failure.
+- **Materials.tsx** — price-book admin + roll-color-list manager (admin role).
+- **Taxonomy.tsx** — inventory taxonomy admin (unit types + smart categories/sizes + suppliers with lead time), manager-role at `/taxonomy` (remove buttons admin-only), linked from Settings → Admin (moved out of Settings 2026-07-02; suppliers added 2026-07-09 — category default vendor is now a supplier dropdown).
+- **Customers.tsx** — search, account detail, printable order history, manager-only level assignment; remove + store-credit changes go through manager approval.
+- **Settings.tsx** — theme picker (per-account), "My account" (change own PIN), admin-only tax/level-discount tuning + inventory knobs (variance thresholds, reorder buffer days), Accounts (role select, reset/set PIN, deactivate/reactivate, add). The Admin section (manager+) links out to `/materials` (admin only) and `/taxonomy` (taxonomy admin moved to its own page 2026-07-02; complexity tuning removed the same day).
+- **lib/api.ts** — fetch wrapper retrying only on network failure; sends the bearer token (`localStorage['dp-token']`), handles 401 (back to sign-in) and 403 `approval_required` (approval dialog + retry); `download()` for authenticated CSV exports.
 - **lib/theme.ts** — CSS-custom-property theme/accent application.
-- **lib/session.ts** — sign-in state, password/admin-unlock state (session-scoped).
+- **lib/session.ts** — cached signed-in user (name + role), `hasRole`, sign-out (revokes the server session), prefs save.
 
 ### Testing (`vitest`)
 
 - Pure-logic unit tests next to each `shared/` module.
-- Integration tests (`server/integration.test.ts`) cover job creation/idempotency, status transitions, payment/void/refund math, roll-SKU integrity (dup + color-typo rejection), batch stock-check, quote-math verification, cycle-count auto-reschedule, inventory adjust, override attribution, and (2026-07-09) suppliers CRUD/delete-guard, per-receipt cost history, cycle count v2 (reason enforcement, lock, snapshot, no-invented-usage), needs-ordering + valuation math, counter-sale deduction (idempotency + zero-clamp), and the inventory settings knobs — against a throwaway SQLite file per run. **147 tests total as of 2026-07-09.**
+- Integration tests (`server/integration.test.ts`) cover job creation/idempotency, status transitions, payment/void/refund math, roll-SKU integrity (dup + color-typo rejection), batch stock-check, quote-math verification, cycle-count auto-reschedule, inventory adjust, override attribution, and (2026-07-09) suppliers CRUD/delete-guard, per-receipt cost history, cycle count v2 (reason enforcement, lock, snapshot, no-invented-usage), needs-ordering + valuation math, counter-sale deduction (idempotency + zero-clamp), and the inventory settings knobs — against a throwaway SQLite file per run. Since 2026-09-25 every integration request carries a session (`server/test-helpers.ts` → `createUserWithToken`), and `server/modules/auth/auth.test.ts` covers sign-in, rate limit, session expiry/revocation, roles, approvals (required / manager PIN / self / wrong PIN / append-only), users admin + last-admin guard, and the plaintext upgrade. **172 tests total as of 2026-09-25.**
 
 ### Deployment
 
@@ -442,3 +446,40 @@ Setup for a larger refactor/hardening effort. **No app features, schema, or UI c
   capped and take 2–5 ms.
 - **Still open:** paginate / push filters into SQL for the inventory endpoints; consider response
   compression; `/api/jobs?q=` filters after the limit (search only covers the newest N rows).
+
+### 2026-09-25 — Phase 1a: roles, sessions, manager approval
+First hardening step toward real sales: the LAN-trust shared admin password is replaced by
+per-user roles, server sessions, and logged manager approvals. **No other feature changed.**
+Decisions and the full route → role/approval table are in `docs/adr/0004-roles-sessions-approvals.md`.
+
+- **Migration `0013_roles_sessions_approvals`** (hand-written, journal idx 13): `users.role`
+  (CHECK cashier|manager|admin, default cashier; **every existing user → admin** so nobody is locked
+  out), `users.pin_hash`; new `sessions` and append-only `approvals` (UPDATE/DELETE triggers);
+  the `adminPassword` settings row is deleted.
+- **Startup upgrade** in `buildApp`: legacy plaintext passwords are scrypt-hashed into `pin_hash`
+  and NULLed (idempotent; verified against a real pre-0013 DB). Legacy passwords keep working as the
+  PIN until changed; users with no password need an admin to set a PIN.
+- **New `server/modules/auth`**: login/logout/me, public `/api/auth/status` (account picker +
+  `needsSetup`) and first-run `/api/auth/setup`, root `onRequest` hook (401 for every `/api` route
+  except health + sign-in), `requireRole`, `requireApproval`, 10-failures/5-min rate limit.
+  `users/service.ts` (`verifyUser`) and settings' `requireAdmin` are gone.
+- **Every old gate replaced** (materials/categories/suppliers/settings writes previously had no server
+  check at all). Money/override actions — void, refund, unpaid pickup, job removal, customer removal,
+  store-credit adjustment, non-receipt stock adjustment — now need manager approval. Unpaid pickup is a
+  two-step: 402 with the balance, confirm, retry with `override: true`. `createdBy` / `completedBy` come
+  from the session; body copies are stripped.
+- **Users admin**: create (name + role + PIN ≥ 4 digits), role change, PIN reset, deactivate/reactivate,
+  own-PIN change; last active admin can't be demoted/deactivated; role/PIN/active changes revoke sessions.
+- **Client**: token in `localStorage['dp-token']`; sign-in posts to `/api/auth/login`; 401 → sign-in;
+  shared `ApprovalDialog` driven from `lib/api.ts` (retries with `approval`); `AdminGate` → `RoleGate`;
+  default-admin-password banner removed; Orders/Quotes "Edit" no longer re-prompts for a password;
+  CSV exports download via authenticated fetch. No restyling.
+- **Seeds**: `server/db/seed-users.ts` — Josiah admin 1234, Amy manager 2222, Sam cashier 3333
+  (demo + perf seeders); `perf:baseline` signs in as the first admin. `batch/smoke.ts` (7-Runtime-Test)
+  now exercises first-run setup + 401 — and its job step was already broken by the 2026-07-02
+  email-required rule (fixed: sends an email).
+- **Tests**: 150 → 172. `npx tsc --noEmit` clean, `vite build` to a temp dir OK, smoke test 15/15.
+- **Still open**: no UI to view/export the `approvals` log (CSV per the money-table rule); rate limiter
+  is in-memory; the client still uses `prompt()` for PIN entry in Settings (Material 3 redesign later);
+  the approval dialog asks for the manager's name as free text (no picker); decide whether inventory
+  item edits (cost, Min, deactivate) should be manager-only — left open to all for now.

@@ -1,6 +1,8 @@
 # ADR 0003 — The settings module owns the admin gate; users owns account verification
 
-**Status:** accepted (2026-07-03)
+**Status:** accepted (2026-07-03); the admin-gate + `verifyUser` half is
+superseded by ADR 0004 (roles, sessions, manager approval — 2026-09-25).
+`getSetting`/`setSetting`/`taxRatePct` still stand.
 
 ## Context
 

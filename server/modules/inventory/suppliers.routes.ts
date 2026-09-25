@@ -2,14 +2,14 @@ import type { FastifyInstance } from 'fastify';
 import { eq, sql } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { suppliers, inventoryItems, inventoryAdjustments, categories } from '../../db/schema/index.js';
-import { requireAdmin } from '../settings/index.js';
+import { requireRole } from '../auth/index.js';
 
 // ---- Suppliers (inventory management pass, 2026-07-07) ----
 // The source of truth that replaces free-text vendor strings. leadTimeDays
 // feeds the AUTO reorder-point suggestion (avg daily use × lead time + buffer).
-// No API password on create/edit — page-level AdminGate guards the UI, same
-// posture as categories. Delete requires the admin password and is blocked
-// while receipts reference the supplier (deactivate instead — history stays).
+// Create/edit is manager+ (same as categories); delete is admin-only and is
+// blocked while receipts reference the supplier (deactivate instead — history
+// stays). ADR 0004.
 
 const isUniqueViolation = (e: unknown): boolean =>
   e instanceof Error && /unique/i.test(e.message);
@@ -32,6 +32,7 @@ export async function supplierRoutes(app: FastifyInstance) {
         notes: { type: 'string', maxLength: 500 },
       } } },
   }, async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
     const b = req.body as { name: string; leadTimeDays?: number; contact?: string; notes?: string };
     try {
       const [row] = await db.insert(suppliers).values({
@@ -56,6 +57,7 @@ export async function supplierRoutes(app: FastifyInstance) {
         active: { type: 'boolean' },
       } } },
   }, async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
     const id = Number((req.params as { id: string }).id);
     try {
       const [row] = await db.update(suppliers).set(req.body as object).where(eq(suppliers.id, id)).returning();
@@ -67,16 +69,12 @@ export async function supplierRoutes(app: FastifyInstance) {
     }
   });
 
-  // Hard delete with admin password — only when no receipts reference it
+  // Hard delete, admin only — only when no receipts reference it
   // (receipt rows are money-adjacent history; never orphan them). Items and
   // categories that pointed at it just lose the reference.
-  app.delete('/api/suppliers/:id', {
-    schema: { body: { type: 'object', required: ['adminPassword'], additionalProperties: false,
-      properties: { adminPassword: { type: 'string' } } } },
-  }, async (req, reply) => {
+  app.delete('/api/suppliers/:id', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
-    const { adminPassword: ap } = req.body as { adminPassword: string };
-    if (!(await requireAdmin(ap))) return reply.code(401).send({ error: 'Admin password required' });
     const [{ n }] = await db.select({ n: sql<number>`count(*)` })
       .from(inventoryAdjustments).where(eq(inventoryAdjustments.supplierId, id));
     if (n > 0) {

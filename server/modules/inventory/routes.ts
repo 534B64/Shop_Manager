@@ -7,6 +7,7 @@ import { ADJUST_REASONS, VARIANCE_REASON_CODES } from '../../../shared/domain.js
 import { varianceFor, hasRepeatedVariance } from '../../../shared/countReview.js';
 import { urgencyCompare, daysUntilStockout } from '../../../shared/reorder.js';
 import { inventorySettings, recomputeAvgDailyUse } from './service.js';
+import { requireApproval, approvalSchema } from '../auth/index.js';
 
 /** Cost per COUNT unit — lastCostCents is per PURCHASE unit; the conversion
  *  factor bridges them. Null when the item has no recorded cost. */
@@ -142,20 +143,26 @@ export async function inventoryRoutes(app: FastifyInstance) {
         delta: { type: 'integer' },
         reason: { type: 'string', enum: [...ADJUST_REASONS] },
         note: { type: 'string', maxLength: 300 },
-        createdBy: { type: 'string', maxLength: 60 },
         unitCostCents: { type: 'integer', minimum: 0 },
         supplierId: { type: 'integer' },
+        approval: approvalSchema,
       } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { delta, reason, note, createdBy, unitCostCents, supplierId } = req.body as { delta: number; reason: string; note?: string; createdBy?: string; unitCostCents?: number; supplierId?: number };
+    const { delta, reason, note, unitCostCents, supplierId } = req.body as { delta: number; reason: string; note?: string; unitCostCents?: number; supplierId?: number };
     const [item] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
     if (!item) return reply.code(404).send({ error: 'Item not found' });
     const next = item.count + delta;
     if (next < 0) return reply.code(409).send({ error: `Count cannot go below zero (have ${item.count})` });
     const isReceipt = reason === 'received';
+    // Receiving is day-to-day work; every other manual count change is an
+    // override of the books and needs a manager (ADR 0004). The weekly cycle
+    // count stays open to everyone — it is the reconciler, with its own
+    // reason-code gate on big variances.
+    if (!isReceipt && !(await requireApproval(req, reply, { action: 'inventory.adjust', entity: 'inventory_item', entityId: id,
+      reason: note ?? null, details: { delta, reason, name: item.name, before: item.count } }))) return reply;
     await db.insert(inventoryAdjustments).values({
-      itemId: id, delta, reason, note: note ?? null, createdBy: createdBy ?? null,
+      itemId: id, delta, reason, note: note ?? null, createdBy: req.user!.name,
       unitCostCents: isReceipt ? unitCostCents ?? null : null,
       supplierId: isReceipt ? supplierId ?? null : null,
     });
@@ -210,14 +217,14 @@ export async function inventoryRoutes(app: FastifyInstance) {
             reasonCode: { type: 'string', enum: [...VARIANCE_REASON_CODES] },
             note: { type: 'string', maxLength: 300 },
           } } },
-        completedBy: { type: 'string', maxLength: 60 },
         nextScheduledFor: { type: 'string', minLength: 10, maxLength: 10 },
       } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { counts, completedBy, nextScheduledFor } = req.body as {
+    const completedBy = req.user!.name;
+    const { counts, nextScheduledFor } = req.body as {
       counts: { itemId: number; counted: number; reasonCode?: string; note?: string }[];
-      completedBy?: string; nextScheduledFor?: string;
+      nextScheduledFor?: string;
     };
     const [cc] = await db.select().from(cycleCounts).where(eq(cycleCounts.id, id));
     if (!cc) return reply.code(404).send({ error: 'Cycle count not found' });
@@ -265,13 +272,13 @@ export async function inventoryRoutes(app: FastifyInstance) {
         await db.insert(inventoryAdjustments).values({
           itemId: c.itemId, delta: v.delta,
           reason: c.reasonCode ?? 'cycle_count',
-          note: c.note ?? null, createdBy: completedBy ?? null, cycleCountId: id,
+          note: c.note ?? null, createdBy: completedBy, cycleCountId: id,
         });
         await db.update(inventoryItems).set({ count: c.counted }).where(eq(inventoryItems.id, c.itemId));
       }
     }
     await db.update(cycleCounts)
-      .set({ completedAt: new Date().toISOString(), completedBy: completedBy ?? null,
+      .set({ completedAt: new Date().toISOString(), completedBy,
         notes: `${counts.length} items counted, ${drift} adjusted` })
       .where(eq(cycleCounts.id, id));
 
