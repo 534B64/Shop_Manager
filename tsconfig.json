@@ -12,5 +12,5 @@
     "forceConsistentCasingInFileNames": true,
     "types": ["node", "vite/client"]
   },
-  "include": ["src", "server", "shared", "vite.config.ts", "drizzle.config.ts"]
+  "include": ["src", "server", "shared", "scripts", "vite.config.ts", "drizzle.config.ts"]
 }
