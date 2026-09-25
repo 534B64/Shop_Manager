@@ -4,6 +4,7 @@ import { db } from '../../db/index.js';
 import { settings } from '../../db/schema/index.js';
 import { DEFAULT_UNIT_TYPES } from '../../../shared/domain.js';
 import { taxRatePct } from './service.js';
+import { requireRole } from '../auth/index.js';
 
 async function getJson<T>(key: string, fallback: T): Promise<T> {
   const [row] = await db.select().from(settings).where(eq(settings.key, key));
@@ -25,7 +26,8 @@ export async function settingsRoutes(app: FastifyInstance) {
   app.put('/api/settings/tax', {
     schema: { body: { type: 'object', required: ['ratePct'], additionalProperties: false,
       properties: { ratePct: { type: 'number', minimum: 0, maximum: 30 } } } },
-  }, async (req) => {
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const { ratePct } = req.body as { ratePct: number };
     const [row] = await db.select().from(settings).where(eq(settings.key, 'taxRatePct'));
     if (row) await db.update(settings).set({ value: String(ratePct) }).where(eq(settings.key, 'taxRatePct'));
@@ -46,7 +48,9 @@ export async function settingsRoutes(app: FastifyInstance) {
       properties: {
         units: { type: 'array', items: { type: 'string', minLength: 1, maxLength: 24 } },
       } } },
-  }, async (req) => {
+  }, async (req, reply) => {
+    // Manager, not admin: the unit list is inventory taxonomy (Taxonomy page).
+    if (!requireRole(req, reply, 'manager')) return reply;
     const { units } = req.body as { units: string[] };
     // Dedupe (case-sensitive exact match — "sqft" and "Sqft" are kept distinct
     // on purpose; the admin can merge by editing the chip text directly).
@@ -68,7 +72,8 @@ export async function settingsRoutes(app: FastifyInstance) {
         unitThreshold: { type: 'number', minimum: 0 },
         reorderBufferDays: { type: 'number', minimum: 0, maximum: 60 },
       } } },
-  }, async (req) => {
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const next = { ...(await getJson('inventorySettings', { pctThreshold: 5, unitThreshold: 5, reorderBufferDays: 3 })), ...(req.body as object) };
     await setJson('inventorySettings', next);
     return next;
@@ -83,7 +88,8 @@ export async function settingsRoutes(app: FastifyInstance) {
         '2': { type: 'number', minimum: 0, maximum: 100 },
         '3': { type: 'number', minimum: 0, maximum: 100 },
       } } },
-  }, async (req) => {
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
     const next = { ...(await getJson('levelDiscounts', DEFAULT_LEVEL_DISCOUNTS)), ...(req.body as object) };
     await setJson('levelDiscounts', next);
     return next;

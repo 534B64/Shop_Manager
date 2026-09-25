@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { get, put, post, del } from '../../lib/api';
 import { ui } from '../../lib/ui';
-import AdminGate from '../../components/AdminGate';
+import RoleGate from '../../components/RoleGate';
+import { hasRole } from '../../lib/session';
 import type { Category, CategorySize, Supplier } from '../../lib/types';
 
 // Inventory taxonomy admin (units & smart categories). Moved out of Settings
@@ -74,10 +75,9 @@ export default function Taxonomy() {
   }
 
   async function removeSupplier(s: Supplier) {
-    const ap = prompt(`Admin password to remove "${s.name}"?\nBlocked if it has receiving history — deactivate instead.`);
-    if (ap === null) return;
+    if (!confirm(`Remove "${s.name}"?\nBlocked if it has receiving history — deactivate instead.`)) return;
     setInvError('');
-    try { await del(`/api/suppliers/${s.id}`, { adminPassword: ap }); refresh(); }
+    try { await del(`/api/suppliers/${s.id}`, {}); refresh(); }
     catch (e) { setInvError(e instanceof Error ? e.message : 'Remove failed'); }
   }
 
@@ -135,11 +135,10 @@ export default function Taxonomy() {
   }
 
   async function removeCategory(c: Category) {
-    const ap = prompt(`Admin password to remove "${c.name}"?\nItems keep their data — they just lose this category.`);
-    if (ap === null) return;
+    if (!confirm(`Remove "${c.name}"?\nItems keep their data — they just lose this category.`)) return;
     setInvError('');
-    try { await del(`/api/categories/${c.id}`, { adminPassword: ap }); refresh(); }
-    catch (e) { setInvError(e instanceof Error ? e.message : 'Remove failed (wrong admin password?)'); }
+    try { await del(`/api/categories/${c.id}`, {}); refresh(); }
+    catch (e) { setInvError(e instanceof Error ? e.message : 'Remove failed'); }
   }
 
   async function addSize(categoryId: number) {
@@ -164,7 +163,7 @@ export default function Taxonomy() {
   return (
     <div>
       <h1 className="text-2xl font-bold mb-2">Inventory Categories, Units &amp; Suppliers</h1>
-      <AdminGate>
+      <RoleGate min="manager">
       <p className="text-muted mb-6">Unit types, smart categories, and suppliers organize inventory. None of it changes pricing or the estimator's stock check.</p>
       {invError && <p className="text-danger mb-3">{invError}</p>}
 
@@ -184,7 +183,7 @@ export default function Taxonomy() {
                 onChange={(e) => setLocalSup(s.id, { contact: e.target.value || null })} />
               <button onClick={() => saveSupplier(s)} className={ui.btnSm}>Save</button>
               <button onClick={() => toggleSupplier(s)} className={ui.btnSm}>{s.active ? 'Deactivate' : 'Reactivate'}</button>
-              <button onClick={() => removeSupplier(s)} className={`${ui.btnSm} text-danger`}>Remove</button>
+              {hasRole('admin') && <button onClick={() => removeSupplier(s)} className={`${ui.btnSm} text-danger`}>Remove</button>}
             </div>
           ))}
           {suppliers.length === 0 && <p className="text-muted">No suppliers yet — add the first one below.</p>}
@@ -257,7 +256,7 @@ export default function Taxonomy() {
                 <button onClick={() => toggleActive(c)} className={ui.btnSm}>
                   {c.active ? 'Deactivate' : 'Reactivate'}
                 </button>
-                <button onClick={() => removeCategory(c)} className={`${ui.btnSm} text-danger`}>Remove</button>
+                {hasRole('admin') && <button onClick={() => removeCategory(c)} className={`${ui.btnSm} text-danger`}>Remove</button>}
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 <label className="text-sm text-muted">Default unit
@@ -302,7 +301,7 @@ export default function Taxonomy() {
           {categories.length === 0 && <p className="text-muted">No categories yet — add the first one above.</p>}
         </div>
       </section>
-      </AdminGate>
+      </RoleGate>
     </div>
   );
 }

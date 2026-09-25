@@ -5,7 +5,6 @@ import { suggestPrice } from '../../../shared/pricing';
 import { autoRollWidth } from '../../../shared/rolls';
 import { formatCents, parseDollarsToCents, formatDate, formatPhone, isValidPhone, isValidEmail } from '../../lib/format';
 import { get, post, put } from '../../lib/api';
-import { currentUser } from '../../lib/session';
 import CopyButton from '../../components/CopyButton';
 import type { Material, Customer, Job, JobItem, MaterialColor, StockResult } from '../../lib/types';
 
@@ -73,7 +72,7 @@ export default function Quotes() {
   const [search, setSearch] = useState('');
   const [showRecent, setShowRecent] = useState(true);
   const [assigning, setAssigning] = useState<number | null>(null); // armed color (2 | 3) for tap-to-assign
-  const [editing, setEditing] = useState<{ id: number; name: string; password: string } | null>(null);
+  const [editing, setEditing] = useState<{ id: number } | null>(null);
   // Phase 8/11: vinyl color lists + advisory stock check for EVERY line.
   const [mainColors, setMainColors] = useState<MaterialColor[]>([]);
   const [mainStock, setMainStock] = useState<StockResult | null>(null);
@@ -319,7 +318,6 @@ export default function Quotes() {
     try {
       const saved = await post<Job & { items: JobItem[]; priceCheck?: PriceCheck }>('/api/jobs', {
         clientRef: draft.clientRef,
-        ...(currentUser() ? { createdBy: currentUser()! } : {}),
         ...buildPayload(status),
       });
       noteMismatch(saved.priceCheck);
@@ -337,7 +335,6 @@ export default function Quotes() {
     setError(''); setSaving(true);
     try {
       const saved = await put<Job & { items: JobItem[]; priceCheck?: PriceCheck }>(`/api/jobs/${editing.id}`, {
-        editorName: editing.name, editorPassword: editing.password,
         ...buildPayload(),
       });
       noteMismatch(saved.priceCheck);
@@ -350,13 +347,9 @@ export default function Quotes() {
   }
 
   async function startEdit(j: Job) {
-    const name = currentUser() ?? prompt('Account name:') ?? '';
-    const password = prompt(`Account password for ${name} (required to edit):`);
-    if (!password) return;
-    try { await post('/api/users/verify', { name, password }); }
-    catch { return setError('Wrong account password.'); }
+    // The signed-in session is the edit attribution (ADR 0004) — no re-prompt.
     const full = await get<Job & { items: JobItem[] }>(`/api/jobs/${j.id}`);
-    setEditing({ id: j.id, name, password });
+    setEditing({ id: j.id });
     setDraft({
       clientRef: crypto.randomUUID(),
       title: full.title, type: full.type,

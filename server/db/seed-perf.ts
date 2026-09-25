@@ -2,7 +2,9 @@
 // file with realistic shop volume so page/endpoint timings mean something:
 //   ~5,000 inventory items (incl. roll SKUs), ~500 customers, ~3,000 jobs with
 //   line items, ~20,000 inventory adjustments over the last 2 years, payments
-//   for most jobs, plus weekly cycle counts.
+//   for most jobs, plus weekly cycle counts. Also the demo accounts
+//   (Josiah admin 1234, Amy manager 2222, Sam cashier 3333 — see seed-users.ts)
+//   so perf:baseline can sign in.
 //
 // Usage:  DB_PATH=./data/perf-test.db npm run db:seed:perf
 //
@@ -19,6 +21,7 @@ requireSafePerfDb('db:seed:perf');
 const { db, runMigrations } = await import('./index.js');
 const S = await import('./schema/index.js');
 const { sql } = await import('drizzle-orm');
+const { seedDemoUsers } = await import('./seed-users.js');
 
 const ANCHOR = new Date('2026-09-25T17:00:00.000Z'); // fixed → repeatable data
 const DAY = 86_400_000;
@@ -68,6 +71,8 @@ if (nJobs > 0 || nCust > 0 || nItems > 0) {
   console.error(`db:seed:perf: ${process.env.DB_PATH} already has data (jobs=${nJobs}, customers=${nCust}, items=${nItems}). Delete the file and rerun.`);
   process.exit(1);
 }
+
+await seedDemoUsers();
 
 // ---------------- reference data ----------------
 const CATEGORY_NAMES = ['Vinyl Rolls', 'T-Shirt Blanks', 'Hardware', 'Sign Blanks', 'Magnets', 'Ink & Consumables', 'Banner & Mesh', 'Packaging'];
@@ -252,7 +257,7 @@ await db.transaction(async (tx) => {
 });
 
 // ---------------- summary ----------------
-const tables = ['categories', 'suppliers', 'materials', 'material_colors', 'inventory_items', 'inventory_adjustments',
+const tables = ['users', 'categories', 'suppliers', 'materials', 'material_colors', 'inventory_items', 'inventory_adjustments',
   'customers', 'jobs', 'job_items', 'payments', 'cycle_counts'];
 console.log(`\nSeeded ${process.env.DB_PATH} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 for (const t of tables) {

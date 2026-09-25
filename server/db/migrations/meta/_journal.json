@@ -92,6 +92,13 @@
       "when": 1783300000000,
       "tag": "0012_inventory_management",
       "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "6",
+      "when": 1790300000000,
+      "tag": "0013_roles_sessions_approvals",
+      "breakpoints": true
     }
   ]
 }

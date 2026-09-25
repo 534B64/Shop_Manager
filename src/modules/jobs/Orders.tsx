@@ -2,8 +2,7 @@ import { useEffect, useState } from 'react';
 import { STATUS_LABELS, JOB_TYPE_LABELS, type JobStatus } from '../../../shared/domain';
 import { nextStatus, prevStatus } from '../../../shared/statusFlow';
 import { formatCents, formatDate, parseDollarsToCents } from '../../lib/format';
-import { get, put, post, del, api } from '../../lib/api';
-import { currentUser } from '../../lib/session';
+import { get, put, del, ApiError } from '../../lib/api';
 import CopyButton from '../../components/CopyButton';
 import type { Job, JobItem } from '../../lib/types';
 
@@ -26,22 +25,12 @@ function dueClass(dueDate: string | null): string {
   return 'text-muted';
 }
 
-async function verifyPassword(): Promise<{ name: string; password: string } | null> {
-  const name = currentUser() ?? prompt('Account name:') ?? '';
-  const password = prompt(`Account password for ${name}:`);
-  if (!password) return null;
-  try {
-    await post('/api/users/verify', { name, password });
-    return { name, password };
-  } catch { alert('Wrong password.'); return null; }
-}
-
 export default function Orders() {
   const [jobs, setJobs] = useState<Job[]>([]);
   const [showHistory, setShowHistory] = useState(false);
   const [error, setError] = useState('');
   const [detail, setDetail] = useState<(Job & { items?: JobItem[] }) | null>(null);
-  const [editable, setEditable] = useState<{ name: string; password: string } | null>(null);
+  const [editable, setEditable] = useState(false);
 
   const refresh = () => get<Job[]>('/api/jobs?limit=200').then(setJobs).catch(() => {});
   useEffect(() => { refresh(); }, []);
@@ -53,54 +42,48 @@ export default function Orders() {
       refresh();
     } catch (e) {
       const msg = e instanceof Error ? e.message : 'Move failed';
-      // Unpaid pickup → admin override popup.
-      if (to === 'picked_up' && msg.includes('Admin override')) {
-        const ap = prompt(`${msg}\n\nAdmin password to override:`);
-        if (!ap) return;
-        // Send who used the override — the server logs it on the job's notes
-        // so an unpaid pickup is attributable to a person.
-        try { await put(`/api/jobs/${j.id}/status`, { status: to, adminPassword: ap, ...(currentUser() ? { overrideBy: currentUser()! } : {}) }); refresh(); }
+      // Unpaid pickup (402) → confirm, then retry as an override. A cashier
+      // gets the shared Manager-approval dialog (api.ts); the server records
+      // who approved it on the job's notes and in the approvals log.
+      if (to === 'picked_up' && e instanceof ApiError && e.status === 402) {
+        if (!confirm(`${msg}\n\nRelease it anyway?`)) return;
+        try { await put(`/api/jobs/${j.id}/status`, { status: to, override: true }); refresh(); }
         catch (e2) { setError(e2 instanceof Error ? e2.message : 'Override failed'); }
       } else setError(msg);
     }
   }
 
   async function openDetail(j: Job) {
-    setEditable(null);
+    setEditable(false);
     const full = await get<Job & { items: JobItem[] }>(`/api/jobs/${j.id}`);
     setDetail(full);
   }
 
   // Remove an order — allowed only while no payment has been taken (server
   // enforces; if a live payment exists it returns a "void or refund first" error).
+  // Needs a manager: a cashier gets the approval dialog (api.ts).
   async function removeJob(j: { id: number }) {
-    const creds = await verifyPassword();
-    if (!creds) return;
+    if (!confirm('Remove this order? It is hidden from the board; the record stays for the books.')) return;
     try {
-      await api(`/api/jobs/${j.id}`, {
-        method: 'DELETE',
-        body: JSON.stringify({ editorName: creds.name, editorPassword: creds.password }),
-      });
-      setDetail(null); setEditable(null); refresh();
+      await del(`/api/jobs/${j.id}`, {});
+      setDetail(null); setEditable(false); refresh();
     } catch (e) { setError(e instanceof Error ? e.message : 'Remove failed'); }
   }
 
-  async function startEdit() {
-    const creds = await verifyPassword();
-    if (creds) setEditable(creds);
+  function startEdit() {
+    setEditable(true); // the session is the edit attribution (ADR 0004)
   }
 
   async function saveDetail() {
     if (!detail || !editable) return;
     try {
       await put(`/api/jobs/${detail.id}`, {
-        editorName: editable.name, editorPassword: editable.password,
         title: detail.title, type: detail.type, dueDate: detail.dueDate,
         quantity: detail.quantity, tags: detail.tags, notes: detail.notes,
         finalPriceCents: detail.finalPriceCents, taxable: detail.taxable,
         fileRef: detail.fileRef ?? '',
       });
-      setDetail(null); setEditable(null); refresh();
+      setDetail(null); setEditable(false); refresh();
     } catch (e) { setError(e instanceof Error ? e.message : 'Save failed'); }
   }
 
@@ -216,10 +199,10 @@ export default function Orders() {
         </div>
       )}
 
-      {/* ---- Detail modal: grayed out until Edit unlocks with a password ---- */}
+      {/* ---- Detail modal: grayed out until Edit is pressed ---- */}
       {detail && (
         <div className="fixed inset-0 z-40 bg-black/40 flex items-center justify-center p-4"
-          onClick={() => { setDetail(null); setEditable(null); }}>
+          onClick={() => { setDetail(null); setEditable(false); }}>
           <div className="bg-surface border border-line rounded-token p-6 w-full max-w-lg max-h-[90vh] overflow-y-auto"
             onClick={(e) => e.stopPropagation()}>
             <div className="flex items-center justify-between mb-4">
@@ -236,7 +219,7 @@ export default function Orders() {
                 )}
                 <button onClick={() => removeJob(detail)}
                   className="px-3 py-2 border border-line rounded-token text-sm text-danger hover:bg-bg">Remove</button>
-                <button onClick={() => { setDetail(null); setEditable(null); }}
+                <button onClick={() => { setDetail(null); setEditable(false); }}
                   className="px-3 py-2 border border-line rounded-token text-sm">Close</button>
               </div>
             </div>

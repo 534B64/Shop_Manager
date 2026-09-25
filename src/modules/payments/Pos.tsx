@@ -1,7 +1,6 @@
 import { useEffect, useState } from 'react';
 import { formatCents, parseDollarsToCents, formatDate } from '../../lib/format';
-import { get, post } from '../../lib/api';
-import { currentUser } from '../../lib/session';
+import { get, post, download } from '../../lib/api';
 
 interface Balance { jobId: number; title: string; status: string; customerName: string | null; finalPriceCents: number; paidCents: number; owedCents: number; }
 interface Summary { count: number; paymentsCents: number; refundsCents: number; netCents: number; byMethod: Record<string, number>; }
@@ -40,7 +39,7 @@ export default function Pos() {
     }
     setError('');
     try {
-      await post('/api/payments', { clientRef: crypto.randomUUID(), jobId: paying.jobId, amountCents: cents, method, ...(currentUser() ? { createdBy: currentUser()! } : {}) });
+      await post('/api/payments', { clientRef: crypto.randomUUID(), jobId: paying.jobId, amountCents: cents, method });
       setPaying(null); setAmount(''); refresh();
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed'); }
   }
@@ -64,7 +63,7 @@ export default function Pos() {
     if (!m || !METHODS.includes(m)) return setError('Invalid method.');
     setError('');
     try {
-      await post('/api/payments', { clientRef: crypto.randomUUID(), jobId: p.jobId, amountCents: cents, method: m, kind: 'refund', ...(currentUser() ? { createdBy: currentUser()! } : {}) });
+      await post('/api/payments', { clientRef: crypto.randomUUID(), jobId: p.jobId, amountCents: cents, method: m, kind: 'refund' });
       refresh();
     } catch (e) { setError(e instanceof Error ? e.message : 'Failed'); }
   }
@@ -99,7 +98,7 @@ export default function Pos() {
           <div className="text-3xl font-bold mb-1">{formatCents(todayTotal)}</div>
           <div className="text-sm text-muted mb-2">{todays.length} payment{todays.length === 1 ? '' : 's'} recorded today</div>
           <div className="flex gap-3 text-sm">
-            <a className="text-accent underline" href="/api/reports/jobs.csv">all jobs.csv</a>
+            <button className="text-accent underline" onClick={() => download('/api/reports/jobs.csv', 'jobs.csv').catch((e) => setError(e.message))}>all jobs.csv</button>
           </div>
         </section>
       </div>
@@ -113,7 +112,7 @@ export default function Pos() {
           <input type="date" className={input} value={from} onChange={(e) => setFrom(e.target.value)} />
           <span className="text-muted">to</span>
           <input type="date" className={input} value={to} onChange={(e) => setTo(e.target.value)} />
-          <a className="text-accent underline text-sm ml-2" href={`/api/reports/payments.csv?from=${from}&to=${to}`}>download CSV</a>
+          <button className="text-accent underline text-sm ml-2" onClick={() => download(`/api/reports/payments.csv?from=${from}&to=${to}`, 'payments.csv').catch((e) => setError(e.message))}>download CSV</button>
         </div>
         {summary && (
           <div className="flex flex-wrap gap-6">

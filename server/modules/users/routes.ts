@@ -1,97 +1,127 @@
-import type { FastifyInstance } from 'fastify';
+import type { FastifyInstance, FastifyReply } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { users } from '../../db/schema/index.js';
-import { getSetting, setSetting, requireAdmin } from '../settings/index.js';
-import { verifyUser } from './service.js';
+import { users, USER_ROLES, type UserRole } from '../../db/schema/index.js';
+import {
+  requireRole, hashPin, verifyPin, revokeUserSessions, activeAdminCount, PIN_PATTERN,
+} from '../auth/index.js';
 
-// Plain-text passwords on purpose: this is a LAN shop tool gating actions,
-// not protecting secrets. Admin password gates account management.
+// Account admin (ADR 0004). Admins create accounts, set roles, reset PINs and
+// deactivate (never delete — names stay on the books). Everyone can change
+// their own PIN (current PIN required) and save their own prefs.
+
+const publicUser = (u: typeof users.$inferSelect) =>
+  ({ id: u.id, name: u.name, role: u.role, active: u.active, hasPin: !!u.pinHash });
+
+/** Refuse a change that would leave no active admin able to sign in. */
+async function guardLastAdmin(target: typeof users.$inferSelect, reply: FastifyReply): Promise<boolean> {
+  const isLiveAdmin = target.role === 'admin' && target.active && !!target.pinHash;
+  if (isLiveAdmin && (await activeAdminCount()) <= 1) {
+    reply.code(409).send({ error: 'This is the last active admin — make someone else admin first.' });
+    return false;
+  }
+  return true;
+}
 
 export async function userRoutes(app: FastifyInstance) {
-  app.get('/api/users', async () => {
+  // ?all=1 includes deactivated accounts (Settings → Accounts).
+  app.get('/api/users', async (req) => {
+    const all = (req.query as { all?: string }).all === '1';
     const rows = await db.select().from(users);
-    return rows.filter((u) => u.active).map((u) => ({ id: u.id, name: u.name }));
+    return rows.filter((u) => all || u.active).map(publicUser);
   });
 
-  // Sign-in: verify password, return account prefs.
-  app.post('/api/users/verify', {
-    schema: { body: { type: 'object', required: ['name', 'password'], additionalProperties: false,
-      properties: { name: { type: 'string' }, password: { type: 'string' } } } },
-  }, async (req, reply) => {
-    const { name, password } = req.body as { name: string; password: string };
-    if (!(await verifyUser(name, password))) return reply.code(401).send({ error: 'Wrong name or password' });
-    const [u] = await db.select().from(users).where(eq(users.name, name));
-    let prefs = null;
-    try { prefs = u.prefs ? JSON.parse(u.prefs) : null; } catch { /* ignore */ }
-    return { ok: true, prefs };
-  });
-
+  // Own prefs (theme, accent, dashboard cards) — always the signed-in account.
   app.put('/api/users/prefs', {
-    schema: { body: { type: 'object', required: ['name', 'password', 'prefs'], additionalProperties: false,
-      properties: { name: { type: 'string' }, password: { type: 'string' }, prefs: { type: 'object', additionalProperties: true } } } },
-  }, async (req, reply) => {
-    const { name, password, prefs } = req.body as { name: string; password: string; prefs: object };
-    if (!(await verifyUser(name, password))) return reply.code(401).send({ error: 'Wrong password' });
-    await db.update(users).set({ prefs: JSON.stringify(prefs) }).where(eq(users.name, name));
+    schema: { body: { type: 'object', required: ['prefs'], additionalProperties: false,
+      properties: { prefs: { type: 'object', additionalProperties: true } } } },
+  }, async (req) => {
+    const { prefs } = req.body as { prefs: object };
+    await db.update(users).set({ prefs: JSON.stringify(prefs) }).where(eq(users.id, req.user!.id));
     return { ok: true };
   });
 
-  // Admin-only: create account (with password) / deactivate / reset password.
-  app.post('/api/users', {
-    schema: { body: { type: 'object', required: ['name', 'password', 'adminPassword'], additionalProperties: false,
-      properties: {
-        name: { type: 'string', minLength: 1, maxLength: 60 },
-        password: { type: 'string', minLength: 3, maxLength: 100 },
-        adminPassword: { type: 'string' },
-      } } },
-  }, async (req, reply) => {
-    const { name, password, adminPassword: ap } = req.body as { name: string; password: string; adminPassword: string };
-    if (!(await requireAdmin(ap))) return reply.code(401).send({ error: 'Admin password required' });
-    const [existing] = await db.select().from(users).where(eq(users.name, name));
-    if (existing) {
-      const [row] = await db.update(users).set({ active: true, password }).where(eq(users.id, existing.id)).returning();
-      return { id: row.id, name: row.name };
-    }
-    const [row] = await db.insert(users).values({ name, password }).returning();
-    reply.code(201);
-    return { id: row.id, name: row.name };
-  });
-
-  app.delete('/api/users/:id', {
-    schema: { body: { type: 'object', required: ['adminPassword'], additionalProperties: false,
-      properties: { adminPassword: { type: 'string' } } } },
-  }, async (req, reply) => {
-    const { adminPassword: ap } = req.body as { adminPassword: string };
-    if (!(await requireAdmin(ap))) return reply.code(401).send({ error: 'Admin password required' });
-    const id = Number((req.params as { id: string }).id);
-    const [row] = await db.update(users).set({ active: false }).where(eq(users.id, id)).returning();
-    if (!row) return reply.code(404).send({ error: 'User not found' });
-    return { ok: true };
-  });
-
-  // Non-blocking trust check: is the admin password still the default 'admin'?
-  // Drives a persistent banner urging a change. Never exposes the password.
-  app.get('/api/admin/status', async () => {
-    return { isDefault: ((await getSetting('adminPassword')) ?? 'admin') === 'admin' };
-  });
-
-  app.post('/api/admin/login', {
-    schema: { body: { type: 'object', required: ['password'], additionalProperties: false,
-      properties: { password: { type: 'string', maxLength: 100 } } } },
-  }, async (req, reply) => {
-    const { password } = req.body as { password: string };
-    if (!(await requireAdmin(password))) return reply.code(401).send({ error: 'Wrong password' });
-    return { ok: true };
-  });
-
-  app.put('/api/admin/password', {
+  // Own PIN change — the current PIN is required even with a live session.
+  app.put('/api/users/me/pin', {
     schema: { body: { type: 'object', required: ['current', 'next'], additionalProperties: false,
-      properties: { current: { type: 'string', maxLength: 100 }, next: { type: 'string', minLength: 3, maxLength: 100 } } } },
+      properties: { current: { type: 'string', maxLength: 100 }, next: { type: 'string', pattern: PIN_PATTERN } } } },
   }, async (req, reply) => {
     const { current, next } = req.body as { current: string; next: string };
-    if (!(await requireAdmin(current))) return reply.code(401).send({ error: 'Wrong current password' });
-    await setSetting('adminPassword', next);
+    const [u] = await db.select().from(users).where(eq(users.id, req.user!.id));
+    if (!(await verifyPin(current, u?.pinHash ?? null))) return reply.code(401).send({ error: 'Wrong current PIN' });
+    await db.update(users).set({ pinHash: await hashPin(next) }).where(eq(users.id, u.id));
+    // Sign out this account everywhere else; the session that changed it stays.
+    const token = req.headers.authorization?.slice(7).trim();
+    await revokeUserSessions(u.id, token);
+    return { ok: true };
+  });
+
+  // Admin: create an account (re-activates + resets a deactivated same-name one).
+  app.post('/api/users', {
+    schema: { body: { type: 'object', required: ['name', 'role', 'pin'], additionalProperties: false,
+      properties: {
+        name: { type: 'string', minLength: 1, maxLength: 60 },
+        role: { type: 'string', enum: [...USER_ROLES] },
+        pin: { type: 'string', pattern: PIN_PATTERN },
+      } } },
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    const { name, role, pin } = req.body as { name: string; role: UserRole; pin: string };
+    const pinHash = await hashPin(pin);
+    const [existing] = await db.select().from(users).where(eq(users.name, name.trim()));
+    if (existing) {
+      if (existing.active) return reply.code(409).send({ error: 'An account with that name already exists' });
+      const [row] = await db.update(users).set({ active: true, role, pinHash, password: null })
+        .where(eq(users.id, existing.id)).returning();
+      return publicUser(row);
+    }
+    const [row] = await db.insert(users).values({ name: name.trim(), role, pinHash }).returning();
+    reply.code(201);
+    return publicUser(row);
+  });
+
+  // Admin: change role and/or (re)activate.
+  app.put('/api/users/:id', {
+    schema: { body: { type: 'object', additionalProperties: false, minProperties: 1,
+      properties: { role: { type: 'string', enum: [...USER_ROLES] }, active: { type: 'boolean' } } } },
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    const id = Number((req.params as { id: string }).id);
+    const b = req.body as { role?: UserRole; active?: boolean };
+    const [u] = await db.select().from(users).where(eq(users.id, id));
+    if (!u) return reply.code(404).send({ error: 'User not found' });
+    const demoting = b.role !== undefined && b.role !== 'admin';
+    if ((demoting || b.active === false) && !(await guardLastAdmin(u, reply))) return reply;
+    const [row] = await db.update(users).set(b).where(eq(users.id, id)).returning();
+    // Role/active changes take effect now, not at the next sign-in.
+    if (b.active === false || (b.role !== undefined && b.role !== u.role)) await revokeUserSessions(id);
+    return publicUser(row);
+  });
+
+  // Admin: reset someone's PIN (signs them out everywhere).
+  app.put('/api/users/:id/pin', {
+    schema: { body: { type: 'object', required: ['pin'], additionalProperties: false,
+      properties: { pin: { type: 'string', pattern: PIN_PATTERN } } } },
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    const id = Number((req.params as { id: string }).id);
+    const { pin } = req.body as { pin: string };
+    const [row] = await db.update(users).set({ pinHash: await hashPin(pin), password: null })
+      .where(eq(users.id, id)).returning();
+    if (!row) return reply.code(404).send({ error: 'User not found' });
+    await revokeUserSessions(id);
+    return publicUser(row);
+  });
+
+  // Admin: deactivate (the old "remove" button — no hard delete).
+  app.delete('/api/users/:id', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    const id = Number((req.params as { id: string }).id);
+    const [u] = await db.select().from(users).where(eq(users.id, id));
+    if (!u) return reply.code(404).send({ error: 'User not found' });
+    if (!(await guardLastAdmin(u, reply))) return reply;
+    await db.update(users).set({ active: false }).where(eq(users.id, id));
+    await revokeUserSessions(id);
     return { ok: true };
   });
 }
