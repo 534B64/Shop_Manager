@@ -3,13 +3,11 @@ import { useEffect, useState } from 'react';
 import { MATERIAL_UNITS, PRICE_MODES, PRICE_MODE_LABELS, type PriceMode } from '../../../shared/domain';
 import { formatCents, parseDollarsToCents } from '../../lib/format';
 import { get, post, put, del } from '../../lib/api';
-import type { Material } from '../../lib/types';
+import type { Material, MaterialColor } from '../../lib/types';
 import RoleGate from '../../components/RoleGate';
 
 const input = 'px-3 py-2.5 bg-bg border border-line rounded-token text-base';
 const small = 'px-2 py-1.5 bg-bg border border-line rounded-token text-sm';
-
-interface MaterialColor { id: number; materialId: number; name: string; }
 
 export default function Materials() {
   const [items, setItems] = useState<Material[]>([]);
@@ -22,19 +20,22 @@ export default function Materials() {
   const [colors, setColors] = useState<Record<number, MaterialColor[]>>({});
   const [colorInput, setColorInput] = useState<Record<number, string>>({});
   const [matSearch, setMatSearch] = useState('');
+  // Archived materials/colors (ADR 0005) are hidden unless this is on.
+  const [showArchived, setShowArchived] = useState(false);
 
-  const refresh = async () => {
+  const refresh = async (archived = showArchived) => {
+    const arch = archived ? '&includeArchived=1' : '';
     try {
-      const mats = await get<Material[]>('/api/materials?all=1');
+      const mats = await get<Material[]>(`/api/materials?all=1${arch}`);
       setItems(mats);
       const rollMats = mats.filter((m) => m.usesRoll);
       const entries = await Promise.all(
-        rollMats.map(async (m) => [m.id, await get<MaterialColor[]>(`/api/materials/${m.id}/colors`)] as const),
+        rollMats.map(async (m) => [m.id, await get<MaterialColor[]>(`/api/materials/${m.id}/colors${archived ? '?includeArchived=1' : ''}`)] as const),
       );
       setColors(Object.fromEntries(entries));
     } catch { /* ignore */ }
   };
-  useEffect(() => { refresh(); }, []);
+  useEffect(() => { refresh(showArchived); }, [showArchived]);
 
   async function addColor(materialId: number) {
     const cn = (colorInput[materialId] ?? '').trim();
@@ -46,10 +47,15 @@ export default function Materials() {
       refresh();
     } catch (e) { setError(e instanceof Error ? e.message : 'Add color failed'); }
   }
-  async function removeColor(materialId: number, colorId: number) {
+  async function archiveColor(materialId: number, colorId: number) {
     setError('');
     try { await del(`/api/materials/${materialId}/colors/${colorId}`); refresh(); }
-    catch (e) { setError(e instanceof Error ? e.message : 'Remove color failed'); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Archive color failed'); }
+  }
+  async function restoreColor(materialId: number, colorId: number) {
+    setError('');
+    try { await post(`/api/materials/${materialId}/colors/${colorId}/unarchive`, {}); refresh(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Restore color failed'); }
   }
 
   async function add() {
@@ -75,13 +81,18 @@ export default function Materials() {
     } catch (e) { setError(e instanceof Error ? e.message : 'Save failed'); }
   }
 
-  async function remove(m: Material) {
-    if (!confirm(`Remove "${m.name}" from materials? This can't be undone.`)) return;
+  async function archive(m: Material) {
+    if (!confirm(`Archive "${m.name}"? It is hidden from the price book and new quotes; old jobs still show it. You can restore it later.`)) return;
     setError('');
     try {
       await del(`/api/materials/${m.id}`);
       refresh();
-    } catch (e) { setError(e instanceof Error ? e.message : 'Remove failed'); }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Archive failed'); }
+  }
+  async function restore(m: Material) {
+    setError('');
+    try { await post(`/api/materials/${m.id}/unarchive`, {}); refresh(); }
+    catch (e) { setError(e instanceof Error ? e.message : 'Restore failed'); }
   }
 
   function rateLabel(mode: string): string {
@@ -117,28 +128,40 @@ export default function Materials() {
 
       <input className={`${input} w-full mb-2`} placeholder="Search materials…" value={matSearch}
         onChange={(e) => setMatSearch(e.target.value)} />
+      <label className="flex items-center gap-2 text-sm text-muted mb-2">
+        <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+        Show archived
+      </label>
       <div className="space-y-2">
         {items.filter((m) => m.name.toLowerCase().includes(matSearch.trim().toLowerCase())).map((m) => (
-          <div key={m.id} className={`bg-surface border border-line rounded-token p-3 ${m.active ? '' : 'opacity-50'}`}>
+          <div key={m.id} className={`bg-surface border border-line rounded-token p-3 ${m.active && !m.archivedAt ? '' : 'opacity-50'}`}>
             <div className="flex items-center gap-3 mb-2">
               <span className="font-semibold flex-1">
                 {m.name} <span className="text-muted text-sm font-normal">({m.unit})</span>
                 {m.usesRoll && <span className="ml-2 text-xs px-1.5 py-0.5 rounded-token border border-line text-muted">roll</span>}
                 {m.isAddon && <span className="ml-1 text-xs px-1.5 py-0.5 rounded-token border border-line text-muted">add-on</span>}
+                {m.archivedAt && <span className="ml-1 text-xs px-1.5 py-0.5 rounded-token border border-line text-muted">archived</span>}
               </span>
               {m.priceMode !== 'custom' && m.rateCents > 0 && (
                 <span className="text-sm text-muted">
                   {formatCents(m.rateCents)} {rateLabel(m.priceMode).replace('$', '')}
                 </span>
               )}
-              <button onClick={() => put(`/api/materials/${m.id}`, { active: !m.active }).then(refresh)}
+              <button onClick={() => put(`/api/materials/${m.id}`, { active: !m.active }).then(() => refresh())}
                 className="px-3 py-1.5 text-sm border border-line rounded-token hover:bg-bg">
                 {m.active ? 'Deactivate' : 'Reactivate'}
               </button>
-              <button onClick={() => remove(m)}
-                className="px-3 py-1.5 text-sm border border-line rounded-token text-danger hover:bg-bg">
-                Remove
-              </button>
+              {m.archivedAt ? (
+                <button onClick={() => restore(m)}
+                  className="px-3 py-1.5 text-sm border border-line rounded-token hover:bg-bg">
+                  Restore
+                </button>
+              ) : (
+                <button onClick={() => archive(m)}
+                  className="px-3 py-1.5 text-sm border border-line rounded-token text-danger hover:bg-bg">
+                  Archive
+                </button>
+              )}
             </div>
             <div className="flex flex-wrap gap-2 items-center">
               <select className={small} value={m.priceMode}
@@ -183,9 +206,11 @@ export default function Materials() {
               <div className="mt-2 pt-2 border-t border-line flex flex-wrap gap-2 items-center">
                 <span className="text-sm text-muted">Colors:</span>
                 {(colors[m.id] ?? []).map((c) => (
-                  <span key={c.id} className="text-sm px-2 py-0.5 rounded-token border border-line flex items-center gap-1">
+                  <span key={c.id} className={`text-sm px-2 py-0.5 rounded-token border border-line flex items-center gap-1 ${c.archivedAt ? 'opacity-50' : ''}`}>
                     {c.name}
-                    <button onClick={() => removeColor(m.id, c.id)} className="text-muted hover:text-danger" title="Remove color">×</button>
+                    {c.archivedAt
+                      ? <button onClick={() => restoreColor(m.id, c.id)} className="text-muted hover:text-accent" title="Restore color">Restore</button>
+                      : <button onClick={() => archiveColor(m.id, c.id)} className="text-muted hover:text-danger" title="Archive color">×</button>}
                   </span>
                 ))}
                 {(colors[m.id] ?? []).length === 0 && <span className="text-sm text-muted italic">none yet</span>}

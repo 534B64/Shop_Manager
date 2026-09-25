@@ -1,17 +1,19 @@
 // Job aggregate service: PO generation and server-side quote-math
 // verification. Routes stay HTTP-only; this is where the rules live.
 import { eq, sql, like, inArray } from 'drizzle-orm';
-import { db } from '../../db/index.js';
+import { db, type Db } from '../../db/index.js';
 import { jobs, materials } from '../../db/schema/index.js';
 import { taxRatePct } from '../settings/index.js';
 import { combinedSuggestedCents, grandTotalCents, type VerifyLine } from '../../../shared/priceVerify.js';
 
 // ---- PO generation ----
 // PO: MMDDYY + 3-digit daily sequence (e.g. order 35 on 06/12/26 → 061226035).
-export async function generatePo(): Promise<string> {
+// Call it with the transaction that inserts the job, so two orders can't
+// read the same count.
+export async function generatePo(dbx: Db = db): Promise<string> {
   const d = new Date();
   const day = String(d.getMonth() + 1).padStart(2, '0') + String(d.getDate()).padStart(2, '0') + String(d.getFullYear()).slice(2);
-  const [{ n }] = await db.select({ n: sql<number>`count(*)` }).from(jobs)
+  const [{ n }] = await dbx.select({ n: sql<number>`count(*)` }).from(jobs)
     .where(like(jobs.po, `${day}%`));
   return `${day}${String(n + 1).padStart(3, '0')}`;
 }
@@ -41,11 +43,11 @@ export interface PriceCheck {
   clientTotalCents: number | null;
 }
 
-export async function verifyQuoteMath(input: VerifyInput): Promise<{ suggestedCents: number | null; totalCents: number; priceCheck: PriceCheck }> {
-  const taxRate = await taxRatePct();
+export async function verifyQuoteMath(input: VerifyInput, dbx: Db = db): Promise<{ suggestedCents: number | null; totalCents: number; priceCheck: PriceCheck }> {
+  const taxRate = await taxRatePct(dbx);
   const ids = [...new Set([input.materialId, ...(input.items ?? []).map((i) => i.materialId)]
     .filter((x): x is number => typeof x === 'number'))];
-  const mats = ids.length ? await db.select().from(materials).where(inArray(materials.id, ids)) : [];
+  const mats = ids.length ? await dbx.select().from(materials).where(inArray(materials.id, ids)) : [];
   const ruleFor = (id?: number | null) => mats.find((m) => m.id === id) ?? null;
 
   const lines: VerifyLine[] = [

@@ -11,7 +11,9 @@ const ACTION_LABELS: Record<string, string> = {
   'payment.refund': 'Record a refund',
   'job.pickup_unpaid': 'Release an order with a balance due',
   'job.delete': 'Remove an order',
-  'customer.delete': 'Remove a customer',
+  'job.unarchive': 'Restore a removed order',
+  'customer.delete': 'Archive a customer',
+  'customer.unarchive': 'Restore an archived customer',
   'customer.credit_adjust': 'Adjust store credit',
   'inventory.adjust': 'Change a stock count',
 };

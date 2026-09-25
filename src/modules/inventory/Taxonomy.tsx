@@ -24,6 +24,9 @@ export default function Taxonomy() {
   const [supName, setSupName] = useState('');
   const [supLead, setSupLead] = useState('7');
   const [supContact, setSupContact] = useState('');
+  // Archived rows (ADR 0005) are always loaded — a category whose default
+  // supplier was archived still shows its name — but only listed when this is on.
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => { refresh(); }, []);
 
@@ -31,11 +34,11 @@ export default function Taxonomy() {
     try {
       const u = await get<{ units: string[] }>('/api/settings/units');
       setUnits(u.units);
-      const cats = await get<Category[]>('/api/categories?all=1');
+      const cats = await get<Category[]>('/api/categories?all=1&includeArchived=1');
       setCategories(cats);
-      setSuppliers(await get<Supplier[]>('/api/suppliers?all=1'));
+      setSuppliers(await get<Supplier[]>('/api/suppliers?all=1&includeArchived=1'));
       const entries = await Promise.all(
-        cats.map(async (c) => [c.id, await get<CategorySize[]>(`/api/categories/${c.id}/sizes`)] as const),
+        cats.map(async (c) => [c.id, await get<CategorySize[]>(`/api/categories/${c.id}/sizes?includeArchived=1`)] as const),
       );
       setSizesByCat(Object.fromEntries(entries));
     } catch (e) { setInvError(e instanceof Error ? e.message : 'Load failed'); }
@@ -74,11 +77,16 @@ export default function Taxonomy() {
     catch (e) { setInvError(e instanceof Error ? e.message : 'Update failed'); }
   }
 
-  async function removeSupplier(s: Supplier) {
-    if (!confirm(`Remove "${s.name}"?\nBlocked if it has receiving history — deactivate instead.`)) return;
+  async function archiveSupplier(s: Supplier) {
+    if (!confirm(`Archive "${s.name}"?\nIt is hidden from lists and pickers; receiving history and items that use it keep it. You can restore it later.`)) return;
     setInvError('');
     try { await del(`/api/suppliers/${s.id}`, {}); refresh(); }
-    catch (e) { setInvError(e instanceof Error ? e.message : 'Remove failed'); }
+    catch (e) { setInvError(e instanceof Error ? e.message : 'Archive failed'); }
+  }
+  async function restoreSupplier(s: Supplier) {
+    setInvError('');
+    try { await post(`/api/suppliers/${s.id}/unarchive`, {}); refresh(); }
+    catch (e) { setInvError(e instanceof Error ? e.message : 'Restore failed'); }
   }
 
   async function saveUnits(next: string[]) {
@@ -134,11 +142,16 @@ export default function Taxonomy() {
     catch (e) { setInvError(e instanceof Error ? e.message : 'Update failed'); }
   }
 
-  async function removeCategory(c: Category) {
-    if (!confirm(`Remove "${c.name}"?\nItems keep their data — they just lose this category.`)) return;
+  async function archiveCategory(c: Category) {
+    if (!confirm(`Archive "${c.name}"?\nIt is hidden from lists and pickers; items keep it and still show its name. You can restore it later.`)) return;
     setInvError('');
     try { await del(`/api/categories/${c.id}`, {}); refresh(); }
-    catch (e) { setInvError(e instanceof Error ? e.message : 'Remove failed'); }
+    catch (e) { setInvError(e instanceof Error ? e.message : 'Archive failed'); }
+  }
+  async function restoreCategory(c: Category) {
+    setInvError('');
+    try { await post(`/api/categories/${c.id}/unarchive`, {}); refresh(); }
+    catch (e) { setInvError(e instanceof Error ? e.message : 'Restore failed'); }
   }
 
   async function addSize(categoryId: number) {
@@ -151,14 +164,21 @@ export default function Taxonomy() {
       refresh();
     } catch (e) { setInvError(e instanceof Error ? e.message : 'Add size failed'); }
   }
-  async function removeSize(categoryId: number, sizeId: number) {
+  async function archiveSize(categoryId: number, sizeId: number) {
     setInvError('');
     try { await del(`/api/categories/${categoryId}/sizes/${sizeId}`); refresh(); }
-    catch (e) { setInvError(e instanceof Error ? e.message : 'Remove size failed'); }
+    catch (e) { setInvError(e instanceof Error ? e.message : 'Archive size failed'); }
+  }
+  async function restoreSize(categoryId: number, sizeId: number) {
+    setInvError('');
+    try { await post(`/api/categories/${categoryId}/sizes/${sizeId}/unarchive`, {}); refresh(); }
+    catch (e) { setInvError(e instanceof Error ? e.message : 'Restore size failed'); }
   }
 
-  const activeCats = categories.filter((c) => c.active);
-  const inactiveCats = categories.filter((c) => !c.active);
+  const visible = <T extends { archivedAt?: string | null }>(rows: T[]) =>
+    showArchived ? rows : rows.filter((r) => !r.archivedAt);
+  const activeCats = visible(categories).filter((c) => c.active && !c.archivedAt);
+  const inactiveCats = visible(categories).filter((c) => !c.active || c.archivedAt);
 
   return (
     <div>
@@ -166,13 +186,17 @@ export default function Taxonomy() {
       <RoleGate min="manager">
       <p className="text-muted mb-6">Unit types, smart categories, and suppliers organize inventory. None of it changes pricing or the estimator's stock check.</p>
       {invError && <p className="text-danger mb-3">{invError}</p>}
+      <label className="flex items-center gap-2 text-sm text-muted mb-3">
+        <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+        Show archived suppliers, categories &amp; sizes
+      </label>
 
       <section className={`${ui.card} mb-4`}>
         <h2 className="font-semibold text-lg mb-1">Suppliers</h2>
         <p className="text-sm text-muted mb-3">Lead time feeds the AUTO reorder-point suggestion on the Inventory page (usage/day × lead + buffer). Receipts record which supplier stock actually came from.</p>
         <div className="space-y-2 mb-4">
-          {suppliers.map((s) => (
-            <div key={s.id} className={`border border-line rounded-token p-3 flex flex-wrap items-center gap-2 ${s.active ? '' : 'opacity-50'}`}>
+          {visible(suppliers).map((s) => (
+            <div key={s.id} className={`border border-line rounded-token p-3 flex flex-wrap items-center gap-2 ${s.active && !s.archivedAt ? '' : 'opacity-50'}`}>
               <input className={`${ui.inputSm} flex-1 min-w-32 font-semibold`} value={s.name}
                 onChange={(e) => setLocalSup(s.id, { name: e.target.value })} />
               <label className="text-sm text-muted">Lead (days)
@@ -183,10 +207,12 @@ export default function Taxonomy() {
                 onChange={(e) => setLocalSup(s.id, { contact: e.target.value || null })} />
               <button onClick={() => saveSupplier(s)} className={ui.btnSm}>Save</button>
               <button onClick={() => toggleSupplier(s)} className={ui.btnSm}>{s.active ? 'Deactivate' : 'Reactivate'}</button>
-              {hasRole('admin') && <button onClick={() => removeSupplier(s)} className={`${ui.btnSm} text-danger`}>Remove</button>}
+              {hasRole('admin') && (s.archivedAt
+                ? <button onClick={() => restoreSupplier(s)} className={ui.btnSm}>Restore</button>
+                : <button onClick={() => archiveSupplier(s)} className={`${ui.btnSm} text-danger`}>Archive</button>)}
             </div>
           ))}
-          {suppliers.length === 0 && <p className="text-muted">No suppliers yet — add the first one below.</p>}
+          {visible(suppliers).length === 0 && <p className="text-muted">No suppliers yet — add the first one below.</p>}
         </div>
         <div className="flex flex-wrap gap-2 items-end">
           <div className="flex-1 min-w-40">
@@ -249,14 +275,16 @@ export default function Taxonomy() {
 
         <div className="space-y-2">
           {[...activeCats, ...inactiveCats].filter((c) => c.name.toLowerCase().includes(catSearch.trim().toLowerCase())).map((c) => (
-            <div key={c.id} className={`border border-line rounded-token p-3 ${c.active ? '' : 'opacity-50'}`}>
+            <div key={c.id} className={`border border-line rounded-token p-3 ${c.active && !c.archivedAt ? '' : 'opacity-50'}`}>
               <div className="flex items-center gap-2 mb-2">
                 <input className={`${ui.inputSm} flex-1 font-semibold`} value={c.name}
                   onChange={(e) => setLocalCat(c.id, { name: e.target.value })} />
                 <button onClick={() => toggleActive(c)} className={ui.btnSm}>
                   {c.active ? 'Deactivate' : 'Reactivate'}
                 </button>
-                {hasRole('admin') && <button onClick={() => removeCategory(c)} className={`${ui.btnSm} text-danger`}>Remove</button>}
+                {hasRole('admin') && (c.archivedAt
+                  ? <button onClick={() => restoreCategory(c)} className={ui.btnSm}>Restore</button>
+                  : <button onClick={() => archiveCategory(c)} className={`${ui.btnSm} text-danger`}>Archive</button>)}
               </div>
               <div className="flex flex-wrap gap-2 items-center">
                 <label className="text-sm text-muted">Default unit
@@ -275,8 +303,8 @@ export default function Taxonomy() {
                   <select className={`${ui.inputSm} ml-1`} value={c.defaultSupplierId ?? ''}
                     onChange={(e) => setLocalCat(c.id, { defaultSupplierId: e.target.value ? Number(e.target.value) : null })}>
                     <option value="">—</option>
-                    {suppliers.filter((s) => s.active || s.id === c.defaultSupplierId).map((s) => (
-                      <option key={s.id} value={s.id}>{s.name}</option>
+                    {suppliers.filter((s) => (s.active && !s.archivedAt) || s.id === c.defaultSupplierId).map((s) => (
+                      <option key={s.id} value={s.id}>{s.name}{s.archivedAt ? ' (archived)' : ''}</option>
                     ))}
                   </select>
                 </label>
@@ -284,13 +312,15 @@ export default function Taxonomy() {
               </div>
               <div className="mt-2 pt-2 border-t border-line flex flex-wrap gap-2 items-center">
                 <span className="text-sm text-muted">Sizes:</span>
-                {(sizesByCat[c.id] ?? []).map((s) => (
-                  <span key={s.id} className={`${ui.chip} flex items-center gap-1`}>
+                {visible(sizesByCat[c.id] ?? []).map((s) => (
+                  <span key={s.id} className={`${ui.chip} flex items-center gap-1 ${s.archivedAt ? 'opacity-50' : ''}`}>
                     {s.label}
-                    <button onClick={() => removeSize(c.id, s.id)} className="text-muted hover:text-danger" title="Remove size">×</button>
+                    {s.archivedAt
+                      ? <button onClick={() => restoreSize(c.id, s.id)} className="text-muted hover:text-accent" title="Restore size">Restore</button>
+                      : <button onClick={() => archiveSize(c.id, s.id)} className="text-muted hover:text-danger" title="Archive size">×</button>}
                   </span>
                 ))}
-                {(sizesByCat[c.id] ?? []).length === 0 && <span className="text-sm text-muted italic">none yet</span>}
+                {visible(sizesByCat[c.id] ?? []).length === 0 && <span className="text-sm text-muted italic">none yet</span>}
                 <input className={`${ui.inputSm} w-24`} placeholder="Add size" value={sizeInput[c.id] ?? ''}
                   onChange={(e) => setSizeInput({ ...sizeInput, [c.id]: e.target.value })}
                   onKeyDown={(e) => { if (e.key === 'Enter') addSize(c.id); }} />
@@ -298,7 +328,7 @@ export default function Taxonomy() {
               </div>
             </div>
           ))}
-          {categories.length === 0 && <p className="text-muted">No categories yet — add the first one above.</p>}
+          {visible(categories).length === 0 && <p className="text-muted">No categories yet — add the first one above.</p>}
         </div>
       </section>
       </RoleGate>

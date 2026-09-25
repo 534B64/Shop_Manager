@@ -1,6 +1,7 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
 import { nowIso } from './common.js';
 import { materials } from './materials.js';
+import { users } from './users.js';
 
 // ---- Suppliers (inventory management pass, 2026-07-07) ----
 // Replaces the free-text `vendor` strings as the source of truth. leadTimeDays
@@ -16,6 +17,9 @@ export const suppliers = sqliteTable('suppliers', {
   notes: text('notes'),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
+  // Archive, never delete (ADR 0005): hidden from lists/pickers, kept for history.
+  archivedAt: text('archived_at'),
+  archivedBy: integer('archived_by').references(() => users.id),
 });
 
 // ---- Inventory taxonomy (Phase 10, Slice 2) ----
@@ -34,6 +38,9 @@ export const categories = sqliteTable('categories', {
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   sort: integer('sort').notNull().default(0),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
+  // Archive, never delete (ADR 0005): hidden from lists/pickers, kept for history.
+  archivedAt: text('archived_at'),
+  archivedBy: integer('archived_by').references(() => users.id),
 });
 
 // Admin-managed size list per category (e.g. S/M/L/XL for apparel blanks, or
@@ -44,6 +51,9 @@ export const categorySizes = sqliteTable('category_sizes', {
   label: text('label').notNull(),
   sort: integer('sort').notNull().default(0),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
+  // Archive, never delete (ADR 0005): hidden from lists/pickers, kept for history.
+  archivedAt: text('archived_at'),
+  archivedBy: integer('archived_by').references(() => users.id),
 });
 
 // Custom fields per category (Pass 2 UI — table created now so the schema is
@@ -126,7 +136,10 @@ export const inventoryAdjustments = sqliteTable('inventory_adjustments', {
   // ledger row to the session, and excludes it from receipt/usage math.
   cycleCountId: integer('cycle_count_id').references(() => cycleCounts.id),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
-});
+}, (t) => ({
+  itemCreatedIdx: index('inventory_adjustments_item_created_idx').on(t.itemId, t.createdAt),
+  createdAtIdx: index('inventory_adjustments_created_at_idx').on(t.createdAt),
+}));
 
 export const cycleCounts = sqliteTable('cycle_counts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -153,4 +166,4 @@ export const cycleCountLines = sqliteTable('cycle_count_lines', {
   reasonCode: text('reason_code'),
   note: text('note'),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
-});
+}, (t) => ({ countIdx: index('cycle_count_lines_count_idx').on(t.cycleCountId) }));

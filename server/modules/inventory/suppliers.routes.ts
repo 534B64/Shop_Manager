@@ -1,25 +1,27 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, sql } from 'drizzle-orm';
-import { db } from '../../db/index.js';
-import { suppliers, inventoryItems, inventoryAdjustments, categories } from '../../db/schema/index.js';
+import { eq } from 'drizzle-orm';
+import { db, withTx } from '../../db/index.js';
+import { suppliers } from '../../db/schema/index.js';
 import { requireRole } from '../auth/index.js';
+import { audit } from '../audit/index.js';
 
 // ---- Suppliers (inventory management pass, 2026-07-07) ----
 // The source of truth that replaces free-text vendor strings. leadTimeDays
 // feeds the AUTO reorder-point suggestion (avg daily use × lead time + buffer).
-// Create/edit is manager+ (same as categories); delete is admin-only and is
-// blocked while receipts reference the supplier (deactivate instead — history
-// stays). ADR 0004.
+// Create/edit is manager+ (same as categories); archive is admin-only
+// (ADR 0004/0005). Archiving hides the supplier from lists and pickers; items,
+// categories and receipts that point at it keep the reference and the name.
 
 const isUniqueViolation = (e: unknown): boolean =>
   e instanceof Error && /unique/i.test(e.message);
 
 export async function supplierRoutes(app: FastifyInstance) {
-  // ?all=1 includes deactivated suppliers (admin view)
+  // ?all=1 includes deactivated suppliers (admin view); ?includeArchived=1
+  // also includes archived ones (ADR 0005).
   app.get('/api/suppliers', async (req) => {
-    const all = (req.query as { all?: string }).all === '1';
+    const { all, includeArchived } = req.query as { all?: string; includeArchived?: string };
     const rows = await db.select().from(suppliers);
-    return (all ? rows : rows.filter((s) => s.active))
+    return rows.filter((s) => (all === '1' || s.active) && (includeArchived === '1' || !s.archivedAt))
       .sort((a, b) => a.name.localeCompare(b.name));
   });
 
@@ -35,12 +37,15 @@ export async function supplierRoutes(app: FastifyInstance) {
     if (!requireRole(req, reply, 'manager')) return reply;
     const b = req.body as { name: string; leadTimeDays?: number; contact?: string; notes?: string };
     try {
-      const [row] = await db.insert(suppliers).values({
-        name: b.name.trim(), leadTimeDays: b.leadTimeDays ?? 7,
-        contact: b.contact ?? null, notes: b.notes ?? null,
-      }).returning();
-      reply.code(201);
-      return row;
+      return await withTx(async (tx) => {
+        const [row] = await tx.insert(suppliers).values({
+          name: b.name.trim(), leadTimeDays: b.leadTimeDays ?? 7,
+          contact: b.contact ?? null, notes: b.notes ?? null,
+        }).returning();
+        await audit(tx, req, { action: 'supplier.create', entity: 'supplier', entityId: row.id, after: row });
+        reply.code(201);
+        return row;
+      });
     } catch (e) {
       if (isUniqueViolation(e)) return reply.code(409).send({ error: 'A supplier with that name already exists' });
       throw e;
@@ -60,30 +65,46 @@ export async function supplierRoutes(app: FastifyInstance) {
     if (!requireRole(req, reply, 'manager')) return reply;
     const id = Number((req.params as { id: string }).id);
     try {
-      const [row] = await db.update(suppliers).set(req.body as object).where(eq(suppliers.id, id)).returning();
-      if (!row) return reply.code(404).send({ error: 'Supplier not found' });
-      return row;
+      return await withTx(async (tx) => {
+        const [before] = await tx.select().from(suppliers).where(eq(suppliers.id, id));
+        if (!before) return reply.code(404).send({ error: 'Supplier not found' });
+        const [row] = await tx.update(suppliers).set(req.body as object).where(eq(suppliers.id, id)).returning();
+        await audit(tx, req, { action: 'supplier.update', entity: 'supplier', entityId: id, before, after: row });
+        return row;
+      });
     } catch (e) {
       if (isUniqueViolation(e)) return reply.code(409).send({ error: 'A supplier with that name already exists' });
       throw e;
     }
   });
 
-  // Hard delete, admin only — only when no receipts reference it
-  // (receipt rows are money-adjacent history; never orphan them). Items and
-  // categories that pointed at it just lose the reference.
+  // "Delete" = archive (ADR 0005), admin only. Receiving history, items and
+  // category defaults keep pointing at it.
   app.delete('/api/suppliers/:id', async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
-    const [{ n }] = await db.select({ n: sql<number>`count(*)` })
-      .from(inventoryAdjustments).where(eq(inventoryAdjustments.supplierId, id));
-    if (n > 0) {
-      return reply.code(409).send({ error: 'This supplier has receiving history — deactivate it instead of deleting.' });
-    }
-    await db.update(inventoryItems).set({ supplierId: null }).where(eq(inventoryItems.supplierId, id));
-    await db.update(categories).set({ defaultSupplierId: null }).where(eq(categories.defaultSupplierId, id));
-    const [row] = await db.delete(suppliers).where(eq(suppliers.id, id)).returning();
-    if (!row) return reply.code(404).send({ error: 'Supplier not found' });
-    return { ok: true };
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(suppliers).where(eq(suppliers.id, id));
+      if (!before) return reply.code(404).send({ error: 'Supplier not found' });
+      if (before.archivedAt) return { ok: true };
+      const [row] = await tx.update(suppliers).set({ archivedAt: new Date().toISOString(), archivedBy: req.user!.id })
+        .where(eq(suppliers.id, id)).returning();
+      await audit(tx, req, { action: 'supplier.archive', entity: 'supplier', entityId: id, before, after: row });
+      return { ok: true };
+    });
+  });
+
+  app.post('/api/suppliers/:id/unarchive', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    const id = Number((req.params as { id: string }).id);
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(suppliers).where(eq(suppliers.id, id));
+      if (!before) return reply.code(404).send({ error: 'Supplier not found' });
+      if (!before.archivedAt) return before;
+      const [row] = await tx.update(suppliers).set({ archivedAt: null, archivedBy: null })
+        .where(eq(suppliers.id, id)).returning();
+      await audit(tx, req, { action: 'supplier.unarchive', entity: 'supplier', entityId: id, before, after: row });
+      return row;
+    });
   });
 }

@@ -45,4 +45,23 @@ export const approvals = sqliteTable('approvals', {
   reason: text('reason'),
   details: text('details'), // JSON
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
-});
+}, (t) => ({ createdAtIdx: index('approvals_created_at_idx').on(t.createdAt) }));
+
+// Audit log (ADR 0005) — append-only (UPDATE/DELETE blocked by triggers in
+// 0014). One row per mutation, written in the same transaction as the change
+// by modules/audit. before/after are JSON snapshots of the entity.
+export const auditLog = sqliteTable('audit_log', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  at: text('at').notNull().$defaultFn(nowIso),
+  userId: integer('user_id').references(() => users.id),
+  action: text('action').notNull(), // e.g. 'customer.archive', 'payment.void'
+  entity: text('entity').notNull(), // e.g. 'customer', 'payment'
+  entityId: text('entity_id'),
+  beforeJson: text('before_json'),
+  afterJson: text('after_json'),
+  approvalId: integer('approval_id').references(() => approvals.id),
+  requestId: text('request_id'),
+}, (t) => ({
+  entityIdx: index('audit_log_entity_idx').on(t.entity, t.entityId),
+  atIdx: index('audit_log_at_idx').on(t.at),
+}));

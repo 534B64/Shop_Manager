@@ -424,21 +424,30 @@ describe('suppliers', () => {
     expect(upd.json().leadTimeDays).toBe(12);
   });
 
-  it('blocks hard delete once receipts reference it; unused suppliers delete clean', async () => {
+  it('delete archives (admin-only) even with receiving history; references and receipts stay', async () => {
     const used = await makeSupplier();
-    const item = await makeItem();
+    const item = await makeItem({ supplierId: used.id });
     await inject({ method: 'POST', url: `/api/inventory/${item.id}/adjust`,
       payload: { delta: 5, reason: 'received', unitCostCents: 250, supplierId: used.id } });
-    const blocked = await inject({ method: 'DELETE', url: `/api/suppliers/${used.id}`, payload: {} });
-    expect(blocked.statusCode).toBe(409);
 
-    const unused = await makeSupplier();
     const { createUserWithToken } = await import('./test-helpers.js');
     const manager = await createUserWithToken(app, 'manager');
-    const notAdmin = await inject({ method: 'DELETE', url: `/api/suppliers/${unused.id}`, payload: {}, headers: manager.headers });
-    expect(notAdmin.statusCode).toBe(403); // delete is admin-only
-    const ok = await inject({ method: 'DELETE', url: `/api/suppliers/${unused.id}`, payload: {} });
+    const notAdmin = await inject({ method: 'DELETE', url: `/api/suppliers/${used.id}`, payload: {}, headers: manager.headers });
+    expect(notAdmin.statusCode).toBe(403); // archive is admin-only
+    const ok = await inject({ method: 'DELETE', url: `/api/suppliers/${used.id}`, payload: {} });
     expect(ok.statusCode).toBe(200);
+
+    const list = (await inject({ method: 'GET', url: '/api/suppliers?all=1' })).json() as { id: number }[];
+    expect(list.some((s) => s.id === used.id)).toBe(false);
+    const withArchived = (await inject({ method: 'GET', url: '/api/suppliers?all=1&includeArchived=1' })).json() as { id: number; archivedAt: string | null }[];
+    expect(withArchived.find((s) => s.id === used.id)!.archivedAt).toBeTruthy();
+    const items = (await inject({ method: 'GET', url: '/api/inventory' })).json() as { id: number; supplierId: number | null }[];
+    expect(items.find((i) => i.id === item.id)!.supplierId).toBe(used.id); // reference kept
+    const costs = (await inject({ method: 'GET', url: `/api/inventory/${item.id}/cost-history` })).json() as { supplierName: string }[];
+    expect(costs[0].supplierName).toBe(used.name);
+
+    const restored = await inject({ method: 'POST', url: `/api/suppliers/${used.id}/unarchive`, payload: {} });
+    expect(restored.json().archivedAt).toBeNull();
   });
 });
 

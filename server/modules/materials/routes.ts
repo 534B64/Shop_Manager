@@ -1,9 +1,10 @@
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
-import { db } from '../../db/index.js';
-import { materials, jobs, jobItems, materialColors } from '../../db/schema/index.js';
+import { and, eq, isNull } from 'drizzle-orm';
+import { db, withTx } from '../../db/index.js';
+import { materials, materialColors } from '../../db/schema/index.js';
 import { PRICE_MODES } from '../../../shared/domain.js';
 import { requireRole } from '../auth/index.js';
+import { audit } from '../audit/index.js';
 
 const materialBody = {
   type: 'object',
@@ -26,19 +27,23 @@ const materialBody = {
 } as const;
 
 export async function materialRoutes(app: FastifyInstance) {
-  // ?all=1 includes deactivated materials (admin view)
+  // ?all=1 includes deactivated materials (admin view); ?includeArchived=1
+  // also includes archived ones (ADR 0005). Pickers use the default.
   app.get('/api/materials', async (req) => {
-    const all = (req.query as { all?: string }).all === '1';
+    const { all, includeArchived } = req.query as { all?: string; includeArchived?: string };
     const rows = await db.select().from(materials);
-    return all ? rows : rows.filter((m) => m.active);
+    return rows.filter((m) => (all === '1' || m.active) && (includeArchived === '1' || !m.archivedAt));
   });
 
   app.post('/api/materials', { schema: { body: materialBody } }, async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
     const body = req.body as { name: string; unit: string; costPerUnitCents: number };
-    const [row] = await db.insert(materials).values(body).returning();
-    reply.code(201);
-    return row;
+    return withTx(async (tx) => {
+      const [row] = await tx.insert(materials).values(body).returning();
+      await audit(tx, req, { action: 'material.create', entity: 'material', entityId: row.id, after: row });
+      reply.code(201);
+      return row;
+    });
   });
 
   app.put('/api/materials/:id', {
@@ -65,34 +70,58 @@ export async function materialRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
-    const [row] = await db.update(materials).set(req.body as object).where(eq(materials.id, id)).returning();
-    if (!row) return reply.code(404).send({ error: 'Material not found' });
-    return row;
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(materials).where(eq(materials.id, id));
+      if (!before) return reply.code(404).send({ error: 'Material not found' });
+      const [row] = await tx.update(materials).set(req.body as object).where(eq(materials.id, id)).returning();
+      await audit(tx, req, { action: 'material.update', entity: 'material', entityId: id, before, after: row });
+      return row;
+    });
   });
 
-  // Hard delete — only allowed for a material never used on a job (or its line items),
-  // so historical quotes never lose the material they reference. Referenced materials
-  // must be deactivated instead (kept on the books, hidden from new quotes).
+  // "Delete" = archive (ADR 0005), admin only. Hidden from the price book and
+  // new quotes; jobs that used it keep showing it (they join by id).
   app.delete('/api/materials/:id', async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
-    const [jobRef] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.materialId, id)).limit(1);
-    const [itemRef] = await db.select({ id: jobItems.id }).from(jobItems).where(eq(jobItems.materialId, id)).limit(1);
-    if (jobRef || itemRef) {
-      return reply.code(409).send({ error: 'This material is used by existing jobs — deactivate it instead of removing.' });
-    }
-    const [row] = await db.delete(materials).where(eq(materials.id, id)).returning();
-    if (!row) return reply.code(404).send({ error: 'Material not found' });
-    return { ok: true };
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(materials).where(eq(materials.id, id));
+      if (!before) return reply.code(404).send({ error: 'Material not found' });
+      if (before.archivedAt) return { ok: true };
+      const [row] = await tx.update(materials).set({ archivedAt: new Date().toISOString(), archivedBy: req.user!.id })
+        .where(eq(materials.id, id)).returning();
+      await audit(tx, req, { action: 'material.archive', entity: 'material', entityId: id, before, after: row });
+      return { ok: true };
+    });
+  });
+
+  app.post('/api/materials/:id/unarchive', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    const id = Number((req.params as { id: string }).id);
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(materials).where(eq(materials.id, id));
+      if (!before) return reply.code(404).send({ error: 'Material not found' });
+      if (!before.archivedAt) return before;
+      const [row] = await tx.update(materials).set({ archivedAt: null, archivedBy: null })
+        .where(eq(materials.id, id)).returning();
+      await audit(tx, req, { action: 'material.unarchive', entity: 'material', entityId: id, before, after: row });
+      return row;
+    });
   });
 
   // ---- Material colors (Phase 8) ----
   // A color is a material *variant* (Red 651 vs Blue 651). It selects which roll
   // inventory to stock-check and never changes price. Admin-only, like every
-  // other materials mutation (ADR 0004).
+  // other materials mutation (ADR 0004). Archived colors are hidden unless
+  // ?includeArchived=1; existing roll SKUs keep their color text.
   app.get('/api/materials/:id/colors', async (req) => {
     const id = Number((req.params as { id: string }).id);
-    return db.select().from(materialColors).where(eq(materialColors.materialId, id)).orderBy(materialColors.name);
+    const { includeArchived } = req.query as { includeArchived?: string };
+    return db.select().from(materialColors)
+      .where(includeArchived === '1'
+        ? eq(materialColors.materialId, id)
+        : and(eq(materialColors.materialId, id), isNull(materialColors.archivedAt)))
+      .orderBy(materialColors.name);
   });
 
   app.post('/api/materials/:id/colors', {
@@ -102,23 +131,49 @@ export async function materialRoutes(app: FastifyInstance) {
     if (!requireRole(req, reply, 'admin')) return reply;
     const id = Number((req.params as { id: string }).id);
     const { name } = req.body as { name: string };
-    const [material] = await db.select().from(materials).where(eq(materials.id, id));
-    if (!material) return reply.code(404).send({ error: 'Material not found' });
-    // No duplicate colors on the same material (case-insensitive).
-    const existing = await db.select().from(materialColors).where(eq(materialColors.materialId, id));
-    if (existing.some((c) => c.name.toLowerCase() === name.trim().toLowerCase())) {
-      return reply.code(409).send({ error: 'That color already exists for this material' });
-    }
-    const [row] = await db.insert(materialColors).values({ materialId: id, name: name.trim() }).returning();
-    reply.code(201);
-    return row;
+    return withTx(async (tx) => {
+      const [material] = await tx.select().from(materials).where(eq(materials.id, id));
+      if (!material) return reply.code(404).send({ error: 'Material not found' });
+      // No duplicate colors on the same material (case-insensitive), archived included.
+      const existing = await tx.select().from(materialColors).where(eq(materialColors.materialId, id));
+      const dup = existing.find((c) => c.name.toLowerCase() === name.trim().toLowerCase());
+      if (dup) {
+        return reply.code(409).send({ error: dup.archivedAt
+          ? 'That color is archived for this material — restore it instead'
+          : 'That color already exists for this material' });
+      }
+      const [row] = await tx.insert(materialColors).values({ materialId: id, name: name.trim() }).returning();
+      await audit(tx, req, { action: 'material_color.create', entity: 'material_color', entityId: row.id, after: row });
+      reply.code(201);
+      return row;
+    });
   });
 
   app.delete('/api/materials/:id/colors/:colorId', async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
     const colorId = Number((req.params as { colorId: string }).colorId);
-    const [row] = await db.delete(materialColors).where(eq(materialColors.id, colorId)).returning();
-    if (!row) return reply.code(404).send({ error: 'Color not found' });
-    return { ok: true };
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(materialColors).where(eq(materialColors.id, colorId));
+      if (!before) return reply.code(404).send({ error: 'Color not found' });
+      if (before.archivedAt) return { ok: true };
+      const [row] = await tx.update(materialColors).set({ archivedAt: new Date().toISOString(), archivedBy: req.user!.id })
+        .where(eq(materialColors.id, colorId)).returning();
+      await audit(tx, req, { action: 'material_color.archive', entity: 'material_color', entityId: colorId, before, after: row });
+      return { ok: true };
+    });
+  });
+
+  app.post('/api/materials/:id/colors/:colorId/unarchive', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    const colorId = Number((req.params as { colorId: string }).colorId);
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(materialColors).where(eq(materialColors.id, colorId));
+      if (!before) return reply.code(404).send({ error: 'Color not found' });
+      if (!before.archivedAt) return before;
+      const [row] = await tx.update(materialColors).set({ archivedAt: null, archivedBy: null })
+        .where(eq(materialColors.id, colorId)).returning();
+      await audit(tx, req, { action: 'material_color.unarchive', entity: 'material_color', entityId: colorId, before, after: row });
+      return row;
+    });
   });
 }

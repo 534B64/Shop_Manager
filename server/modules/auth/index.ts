@@ -7,6 +7,6 @@ export {
   activeAdminCount, upgradePlaintextPasswords, hashPin, verifyCredentials,
   createSession, resetRateLimits, atLeast,
   SESSION_IDLE_MS, SESSION_ABSOLUTE_MS,
-  type AuthUser, type ApprovalRequest,
+  type AuthUser, type ApprovalRequest, type Approver,
 } from './service.js';
 export { verifyPin } from './crypto.js';

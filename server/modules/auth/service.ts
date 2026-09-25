@@ -3,7 +3,7 @@
 // index.ts — no route re-implements a credential or role check.
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { and, eq, isNull, isNotNull, sql } from 'drizzle-orm';
-import { db } from '../../db/index.js';
+import { db, withTx, type Db } from '../../db/index.js';
 import { users, sessions, approvals, type UserRole } from '../../db/schema/index.js';
 import { hashPin, verifyPin, newToken, hashToken } from './crypto.js';
 
@@ -60,30 +60,32 @@ export async function verifyCredentials(name: string, pin: string): Promise<Auth
 export async function createSession(userId: number): Promise<string> {
   const token = newToken();
   const now = new Date();
-  await db.insert(sessions).values({
+  await withTx((tx) => tx.insert(sessions).values({
     tokenHash: hashToken(token), userId,
     createdAt: now.toISOString(), lastSeenAt: now.toISOString(),
     expiresAt: new Date(now.getTime() + SESSION_ABSOLUTE_MS).toISOString(),
-  });
+  }));
   return token;
 }
 
 export async function revokeSession(token: string): Promise<void> {
-  await db.update(sessions).set({ revokedAt: new Date().toISOString() })
-    .where(and(eq(sessions.tokenHash, hashToken(token)), isNull(sessions.revokedAt)));
+  await withTx((tx) => tx.update(sessions).set({ revokedAt: new Date().toISOString() })
+    .where(and(eq(sessions.tokenHash, hashToken(token)), isNull(sessions.revokedAt))));
 }
 
 /** Revoke every live session a user has (deactivation, PIN reset, role change). */
 export async function revokeUserSessions(userId: number, exceptToken?: string): Promise<void> {
-  const rows = await db.select().from(sessions)
-    .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)));
   const keep = exceptToken ? hashToken(exceptToken) : null;
   const now = new Date().toISOString();
-  for (const s of rows) {
-    if (s.tokenHash !== keep) {
-      await db.update(sessions).set({ revokedAt: now }).where(eq(sessions.tokenHash, s.tokenHash));
+  await withTx(async (tx) => {
+    const rows = await tx.select().from(sessions)
+      .where(and(eq(sessions.userId, userId), isNull(sessions.revokedAt)));
+    for (const s of rows) {
+      if (s.tokenHash !== keep) {
+        await tx.update(sessions).set({ revokedAt: now }).where(eq(sessions.tokenHash, s.tokenHash));
+      }
     }
-  }
+  });
 }
 
 /** Resolve a bearer token to its user; slides the idle window. null = no
@@ -98,8 +100,8 @@ export async function resolveSession(token: string): Promise<AuthUser | null> {
   const [u] = await db.select().from(users).where(eq(users.id, s.userId));
   if (!u || !u.active) return null;
   if (now - Date.parse(s.lastSeenAt) >= TOUCH_EVERY_MS) {
-    await db.update(sessions).set({ lastSeenAt: new Date(now).toISOString() })
-      .where(eq(sessions.tokenHash, s.tokenHash));
+    await withTx((tx) => tx.update(sessions).set({ lastSeenAt: new Date(now).toISOString() })
+      .where(eq(sessions.tokenHash, s.tokenHash)));
   }
   return { id: u.id, name: u.name, role: u.role, prefs: parsePrefs(u.prefs) };
 }
@@ -136,6 +138,7 @@ export function requireRole(req: FastifyRequest, reply: FastifyReply, min: UserR
 }
 
 export interface ApprovalInput { name: string; pin: string; reason?: string }
+export type Approver = AuthUser & { approvalId: number };
 export interface ApprovalRequest {
   action: string; entity: string; entityId?: string | number | null;
   reason?: string | null; details?: unknown;
@@ -157,11 +160,13 @@ export const approvalSchema = {
  * when the body carries `approval: {name, pin}` from an active manager/admin.
  * Otherwise replies 403 {error:'approval_required', action} (or 403
  * approval_invalid / 429 on a bad or rate-limited PIN) and returns null;
- * callers `return reply` on null. Returns the approver on success.
+ * callers `return reply` on null. Returns the approver plus the approvals
+ * row id (link it from the audit row) on success. Called inside the route's
+ * transaction, the approvals row commits or rolls back with the action.
  */
 export async function requireApproval(
   req: FastifyRequest, reply: FastifyReply, opts: ApprovalRequest,
-): Promise<AuthUser | null> {
+): Promise<Approver | null> {
   const me = req.user;
   if (!me) { reply.code(401).send({ error: 'Sign in required' }); return null; }
   const given = (req.body as { approval?: ApprovalInput } | null)?.approval;
@@ -183,21 +188,21 @@ export async function requireApproval(
     reply.code(403).send({ error: 'approval_required', action: opts.action });
     return null;
   }
-  await db.insert(approvals).values({
+  const [row] = await withTx((tx) => tx.insert(approvals).values({
     action: opts.action, entity: opts.entity,
     entityId: opts.entityId != null ? String(opts.entityId) : null,
     requestedBy: me.id, approvedBy: approver.id,
     reason: opts.reason ?? given?.reason ?? null,
     details: opts.details !== undefined ? JSON.stringify(opts.details) : null,
-  });
-  return approver;
+  }).returning({ id: approvals.id }));
+  return { ...approver, approvalId: row.id };
 }
 
 // ---- Admin-count guard + startup upgrade ----
 
 /** Active admins who can actually sign in. */
-export async function activeAdminCount(): Promise<number> {
-  const [row] = await db.select({ n: sql<number>`count(*)` }).from(users)
+export async function activeAdminCount(dbx: Db = db): Promise<number> {
+  const [row] = await dbx.select({ n: sql<number>`count(*)` }).from(users)
     .where(and(eq(users.role, 'admin'), eq(users.active, true), isNotNull(users.pinHash)));
   return row.n;
 }
@@ -211,12 +216,9 @@ export async function upgradePlaintextPasswords(): Promise<number> {
   const rows = await db.select().from(users).where(isNotNull(users.password));
   let upgraded = 0;
   for (const u of rows) {
-    if (!u.pinHash && u.password) {
-      await db.update(users).set({ pinHash: await hashPin(u.password), password: null }).where(eq(users.id, u.id));
-      upgraded++;
-    } else {
-      await db.update(users).set({ password: null }).where(eq(users.id, u.id));
-    }
+    const pinHash = !u.pinHash && u.password ? await hashPin(u.password) : u.pinHash;
+    if (pinHash !== u.pinHash) upgraded++;
+    await withTx((tx) => tx.update(users).set({ pinHash, password: null }).where(eq(users.id, u.id)));
   }
   return upgraded;
 }

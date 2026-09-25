@@ -36,11 +36,12 @@ The v1 win condition: **anyone in the shop can quote a job consistently.** When 
 - **Why SQLite**: one small team on a LAN; the DB is a single file that rides the existing NAS → cloud backup pipeline for free. Do not introduce Postgres/MySQL without an explicit decision.
 - **Sketchy-wifi rules**: keep payloads small; autosave form drafts client-side; idempotent mutations with retry; no features that break if a request drops mid-flight.
 - No external SaaS dependencies. No card processing. Payments are record-only.
+- **Archive + audit (Phase 1b, 2026-09-25 — ADR 0005)**: nothing is hard-deleted (DB triggers enforce it); every mutation runs in one serialized `withTx` transaction with an append-only `audit_log` row; `GET /api/audit` (+ `.csv`) is admin-only, no UI yet.
 - **Auth (Phase 1a, 2026-09-25 — ADR 0004)**: per-user roles cashier / manager / admin with scrypt-hashed PINs; server sessions (bearer token, 12 h idle / 7-day cap); every `/api` route except health + sign-in needs a session. Manager approval = a manager types their own name + PIN at the moment of a void/refund/unpaid pickup/removal/credit or stock correction, logged to the append-only `approvals` table. The old LAN-trust shared admin password and `AdminGate` are gone; the client uses `RoleGate` and the one shared approval dialog (`src/components/ApprovalDialog.tsx`, driven by `src/lib/api.ts`).
 
 ### Module map (2026-07-03 reorg — ADR 0001)
 
-- **`server/modules/<domain>/`** — auth (sessions, roles, approvals — ADR 0004), jobs, payments, customers, materials, inventory (incl. categories), settings, users. Each has `routes.ts` (+ `service.ts`/`queries.ts` where warranted) behind **`index.ts`, the module's only import surface** — nothing outside a module folder imports its internals.
+- **`server/modules/<domain>/`** — auth (sessions, roles, approvals — ADR 0004), audit (audit log — ADR 0005), jobs, payments, customers, materials, inventory (incl. categories), settings, users. Each has `routes.ts` (+ `service.ts`/`queries.ts` where warranted) behind **`index.ts`, the module's only import surface** — nothing outside a module folder imports its internals.
 - **Cross-module rules:** money math lives in payments (`creditBalanceCents`, `paidNetCents`, `livePaymentCount` — ADR 0002); settings reads live in settings (`getSetting`, `setSetting`, `taxRatePct` — ADR 0003); **auth lives in `server/modules/auth`** (ADR 0004): sessions, `requireRole(req, reply, 'manager'|'admin')` for configuration, `requireApproval(req, reply, {action, entity, …})` for money/override actions. Never re-add a password-in-body check; attribution (`createdBy` etc.) always comes from `req.user`, never the request body.
 - **`server/db/schema/<domain>.ts`** barreled through `server/db/schema/index.ts` (drizzle-kit's entry). Table definitions must stay in sync with checked-in migrations; `server/db/index.ts` must not move (it resolves the migrations folder relative to itself).
 - **`shared/`** — unchanged: pure client+server business logic (pricing, rolls, stockCheck, statusFlow, priceVerify, inventoryView, domain), each with co-located tests.
@@ -72,6 +73,9 @@ The v1 win condition: **anyone in the shop can quote a job consistently.** When 
 - Seed script with realistic shop data (materials, sample jobs) for dev.
 - Money as integer cents. Dates in ISO 8601, displayed local.
 - Tests for the estimator math and status transitions at minimum.
+- **No hard deletes** (ADR 0005). "Delete" archives (`archived_at`/`archived_by`, or `deleted_at` on jobs/job_items); list endpoints hide archived rows unless `?includeArchived=1`, and every archive has a `POST …/unarchive` with the same permission. SQLite triggers reject `DELETE` on the protected tables and edits to payment amounts / ledger rows — don't work around them.
+- **Every mutation writes an audit row in the same transaction** — `audit(tx, req, {action, entity, entityId, before, after, approvalId})` from `server/modules/audit`. Only user theme prefs are exempt.
+- **Multi-step writes use one transaction** — `withTx(async (tx) => …)` from `server/db` (not `db.transaction`, see ADR 0005). Inside it, every read that decides the write goes through `tx`; cross-module functions take an optional `dbx: Db = db`.
 
 ## Consulting Posture
 

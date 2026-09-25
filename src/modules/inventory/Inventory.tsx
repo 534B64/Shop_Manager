@@ -42,8 +42,13 @@ export default function Inventory() {
   // Phase 10, Slice 2: category-aware item entry. ORTHOGONAL to the roll-SKU
   // path — picking a category only pre-fills unit/supplier and reveals
   // category-driven fields (color, size); it never touches material/roll state.
+  // Pickers list only live (active, non-archived) categories/suppliers; the
+  // all* lists also hold archived ones so existing items keep showing their
+  // names (ADR 0005).
   const [categories, setCategories] = useState<Category[]>([]);
   const [suppliers, setSuppliers] = useState<Supplier[]>([]);
+  const [allCategories, setAllCategories] = useState<Category[]>([]);
+  const [allSuppliers, setAllSuppliers] = useState<Supplier[]>([]);
   const [invSettings, setInvSettings] = useState<InvSettings>({ pctThreshold: 5, unitThreshold: 5, reorderBufferDays: 3 });
   const [valuation, setValuation] = useState<Valuation | null>(null);
   const [unitTypes, setUnitTypes] = useState<string[]>([]);
@@ -95,8 +100,14 @@ export default function Inventory() {
       );
       setColorsByMat(Object.fromEntries(entries));
     }).catch(() => {});
-    get<Category[]>('/api/categories').then(setCategories).catch(() => {});
-    get<Supplier[]>('/api/suppliers').then(setSuppliers).catch(() => {});
+    get<Category[]>('/api/categories?all=1&includeArchived=1').then((all) => {
+      setAllCategories(all);
+      setCategories(all.filter((c) => c.active && !c.archivedAt));
+    }).catch(() => {});
+    get<Supplier[]>('/api/suppliers?all=1&includeArchived=1').then((all) => {
+      setAllSuppliers(all);
+      setSuppliers(all.filter((s) => s.active && !s.archivedAt));
+    }).catch(() => {});
     get<InvSettings>('/api/settings/inventory').then(setInvSettings).catch(() => {});
     get<Valuation>('/api/inventory/valuation').then(setValuation).catch(() => {});
     get<{ units: string[] }>('/api/settings/units').then((u) => setUnitTypes(u.units)).catch(() => {});
@@ -282,7 +293,7 @@ export default function Inventory() {
     });
   }
   const editItem = edit ? items.find((i) => i.id === edit.id) ?? null : null;
-  const editSupplier = edit?.supplierId ? suppliers.find((s) => s.id === Number(edit.supplierId)) ?? null : null;
+  const editSupplier = edit?.supplierId ? allSuppliers.find((s) => s.id === Number(edit.supplierId)) ?? null : null;
   const autoMin = editItem && editSupplier
     ? suggestedMin(editItem.avgDailyUse, editSupplier.leadTimeDays, invSettings.reorderBufferDays)
     : null;
@@ -333,14 +344,14 @@ export default function Inventory() {
   // Consumables" group under groupBy=material, which is an acceptable fallback.
   const invItems: InvViewItem[] = useMemo(() => items.map((i) => {
     const mat = i.materialId != null ? rollMats.find((m) => m.id === i.materialId) : undefined;
-    const cat = i.categoryId != null ? categories.find((c) => c.id === i.categoryId) : undefined;
+    const cat = i.categoryId != null ? allCategories.find((c) => c.id === i.categoryId) : undefined;
     return {
       id: i.id, name: i.name, count: i.count, lowStockThreshold: i.lowStockThreshold,
       vendor: i.vendor, color: i.color ?? null, nominalWidthIn: i.nominalWidthIn ?? null,
       materialId: i.materialId ?? null, materialName: mat?.name ?? null, unit: mat?.unit ?? null,
       categoryId: i.categoryId ?? null, categoryName: cat?.name ?? null,
     };
-  }), [items, rollMats, categories]);
+  }), [items, rollMats, allCategories]);
 
   const view = useMemo(() => buildInventoryView(invItems, {
     search: fSearch, op: fOp, kind: fKind,
@@ -353,7 +364,7 @@ export default function Inventory() {
 
   const toggleGroup = (key: string) => setCollapsed((c) => ({ ...c, [key]: !c[key] }));
   const supplierName = (id: number | null | undefined, fallback?: string | null) =>
-    id != null ? suppliers.find((s) => s.id === id)?.name ?? fallback ?? null : fallback ?? null;
+    id != null ? allSuppliers.find((s) => s.id === id)?.name ?? fallback ?? null : fallback ?? null;
 
   const select = 'px-3 py-2 bg-bg border border-line rounded-token text-sm';
   const reasonLabel = (code: string) => ADJUST_REASON_LABELS[code as VarianceReasonCode] ?? code;
@@ -676,7 +687,7 @@ export default function Inventory() {
                     if (!i) return null;
                     const out = i.count === 0;
                     const low = !out && i.count <= i.lowStockThreshold;
-                    const catName = i.categoryId != null ? (categories.find((c) => c.id === i.categoryId)?.name ?? null) : null;
+                    const catName = i.categoryId != null ? (allCategories.find((c) => c.id === i.categoryId)?.name ?? null) : null;
                     const sizeLabel = i.sizeText || (i.nominalWidthIn != null ? `${i.nominalWidthIn}″` : null);
                     const sup = supplierName(i.supplierId, i.vendor);
                     const isEditing = edit?.id === i.id;
@@ -717,6 +728,9 @@ export default function Inventory() {
                               <select className={select} value={edit.supplierId} onChange={(e) => setEdit({ ...edit, supplierId: e.target.value })}>
                                 <option value="">—</option>
                                 {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name} ({s.leadTimeDays}d lead)</option>)}
+                                {editSupplier && !suppliers.some((s) => s.id === editSupplier.id) && (
+                                  <option value={editSupplier.id}>{editSupplier.name} (archived/inactive)</option>
+                                )}
                               </select>
                             </div>
                             <div>

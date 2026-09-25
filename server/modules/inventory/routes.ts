@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, isNull, and, isNotNull, asc } from 'drizzle-orm';
-import { db } from '../../db/index.js';
+import { db, withTx, type Db } from '../../db/index.js';
 import { inventoryItems, inventoryAdjustments, cycleCounts, cycleCountLines, materials, materialColors, suppliers, categories } from '../../db/schema/index.js';
 import { availabilityCheck, acrossFromDims, type StockLineQuery, type StockResult } from '../../../shared/stockCheck.js';
 import { ADJUST_REASONS, VARIANCE_REASON_CODES } from '../../../shared/domain.js';
@@ -8,6 +8,7 @@ import { varianceFor, hasRepeatedVariance } from '../../../shared/countReview.js
 import { urgencyCompare, daysUntilStockout } from '../../../shared/reorder.js';
 import { inventorySettings, recomputeAvgDailyUse } from './service.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
+import { audit } from '../audit/index.js';
 
 /** Cost per COUNT unit — lastCostCents is per PURCHASE unit; the conversion
  *  factor bridges them. Null when the item has no recorded cost. */
@@ -20,10 +21,12 @@ function costPerCountUnit(item: { lastCostCents: number | null; purchaseToCountF
 const isUniqueViolation = (e: unknown): boolean =>
   e instanceof Error && /unique/i.test(e.message);
 
-/** A SKU's color must be one of the material's admin-defined colors — a typo
- *  would otherwise create an orphan color the stock-check silently never finds. */
-async function validateSkuColor(materialId: number, color: string): Promise<string | null> {
-  const list = await db.select().from(materialColors).where(eq(materialColors.materialId, materialId));
+/** A SKU's color must be one of the material's admin-defined (non-archived)
+ *  colors — a typo would otherwise create an orphan color the stock-check
+ *  silently never finds. */
+async function validateSkuColor(materialId: number, color: string, dbx: Db = db): Promise<string | null> {
+  const list = await dbx.select().from(materialColors)
+    .where(and(eq(materialColors.materialId, materialId), isNull(materialColors.archivedAt)));
   if (list.length === 0) return `This material has no colors set up — add '${color}' on the Materials page first.`;
   if (!list.some((c) => c.name.toLowerCase() === color.toLowerCase())) {
     return `'${color}' is not in this material's color list (${list.map((c) => c.name).join(', ')}). Add it on the Materials page first.`;
@@ -84,9 +87,12 @@ export async function inventoryRoutes(app: FastifyInstance) {
         reorderMaxQty: { type: 'integer', minimum: 0 },
       } } },
   }, async (req, reply) => {
-    const [row] = await db.insert(inventoryItems).values(req.body as { name: string }).returning();
-    reply.code(201);
-    return row;
+    return withTx(async (tx) => {
+      const [row] = await tx.insert(inventoryItems).values(req.body as { name: string }).returning();
+      await audit(tx, req, { action: 'inventory_item.create', entity: 'inventory_item', entityId: row.id, after: row });
+      reply.code(201);
+      return row;
+    });
   });
 
   app.put('/api/inventory/:id', {
@@ -111,18 +117,21 @@ export async function inventoryRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const b = req.body as { color?: string | null; active?: boolean };
-    const [item] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
-    if (!item) return reply.code(404).send({ error: 'Item not found' });
-    // Roll SKUs: a color change must stay within the material's color list
-    // (same guard as SKU creation — see validateSkuColor).
-    const isRollSku = item.materialId != null && item.nominalWidthIn != null;
-    if (isRollSku && typeof b.color === 'string' && b.color.trim().toLowerCase() !== (item.color ?? '').toLowerCase()) {
-      const colorError = await validateSkuColor(item.materialId as number, b.color.trim());
-      if (colorError) return reply.code(400).send({ error: colorError });
-    }
     try {
-      const [row] = await db.update(inventoryItems).set(req.body as object).where(eq(inventoryItems.id, id)).returning();
-      return row;
+      return await withTx(async (tx) => {
+        const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+        if (!item) return reply.code(404).send({ error: 'Item not found' });
+        // Roll SKUs: a color change must stay within the material's color list
+        // (same guard as SKU creation — see validateSkuColor).
+        const isRollSku = item.materialId != null && item.nominalWidthIn != null;
+        if (isRollSku && typeof b.color === 'string' && b.color.trim().toLowerCase() !== (item.color ?? '').toLowerCase()) {
+          const colorError = await validateSkuColor(item.materialId as number, b.color.trim(), tx);
+          if (colorError) return reply.code(400).send({ error: colorError });
+        }
+        const [row] = await tx.update(inventoryItems).set(req.body as object).where(eq(inventoryItems.id, id)).returning();
+        await audit(tx, req, { action: 'inventory_item.update', entity: 'inventory_item', entityId: id, before: item, after: row });
+        return row;
+      });
     } catch (e) {
       if (isUniqueViolation(e)) {
         return reply.code(409).send({ error: 'That change would duplicate an existing roll SKU (same material, color, and width).' });
@@ -150,28 +159,40 @@ export async function inventoryRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const { delta, reason, note, unitCostCents, supplierId } = req.body as { delta: number; reason: string; note?: string; unitCostCents?: number; supplierId?: number };
-    const [item] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
-    if (!item) return reply.code(404).send({ error: 'Item not found' });
-    const next = item.count + delta;
-    if (next < 0) return reply.code(409).send({ error: `Count cannot go below zero (have ${item.count})` });
-    const isReceipt = reason === 'received';
-    // Receiving is day-to-day work; every other manual count change is an
-    // override of the books and needs a manager (ADR 0004). The weekly cycle
-    // count stays open to everyone — it is the reconciler, with its own
-    // reason-code gate on big variances.
-    if (!isReceipt && !(await requireApproval(req, reply, { action: 'inventory.adjust', entity: 'inventory_item', entityId: id,
-      reason: note ?? null, details: { delta, reason, name: item.name, before: item.count } }))) return reply;
-    await db.insert(inventoryAdjustments).values({
-      itemId: id, delta, reason, note: note ?? null, createdBy: req.user!.name,
-      unitCostCents: isReceipt ? unitCostCents ?? null : null,
-      supplierId: isReceipt ? supplierId ?? null : null,
+    // One transaction: the ledger row, the new count/cost, and the audit row.
+    // The below-zero check reads the count through the same transaction.
+    return withTx(async (tx) => {
+      const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+      if (!item) return reply.code(404).send({ error: 'Item not found' });
+      const next = item.count + delta;
+      if (next < 0) return reply.code(409).send({ error: `Count cannot go below zero (have ${item.count})` });
+      const isReceipt = reason === 'received';
+      // Receiving is day-to-day work; every other manual count change is an
+      // override of the books and needs a manager (ADR 0004). The weekly cycle
+      // count stays open to everyone — it is the reconciler, with its own
+      // reason-code gate on big variances.
+      let approvalId: number | null = null;
+      if (!isReceipt) {
+        const approver = await requireApproval(req, reply, { action: 'inventory.adjust', entity: 'inventory_item', entityId: id,
+          reason: note ?? null, details: { delta, reason, name: item.name, before: item.count } });
+        if (!approver) return reply;
+        approvalId = approver.approvalId;
+      }
+      const [adj] = await tx.insert(inventoryAdjustments).values({
+        itemId: id, delta, reason, note: note ?? null, createdBy: req.user!.name,
+        unitCostCents: isReceipt ? unitCostCents ?? null : null,
+        supplierId: isReceipt ? supplierId ?? null : null,
+      }).returning();
+      const patch: Record<string, unknown> = { count: next };
+      // Receiving with a cost updates "last cost paid" — the latest point of the
+      // per-receipt history stored above.
+      if (isReceipt && unitCostCents != null) patch.lastCostCents = unitCostCents;
+      const [row] = await tx.update(inventoryItems).set(patch).where(eq(inventoryItems.id, id)).returning();
+      await audit(tx, req, { action: isReceipt ? 'inventory.receive' : 'inventory.adjust', entity: 'inventory_item',
+        entityId: id, before: { count: item.count, lastCostCents: item.lastCostCents },
+        after: { count: row.count, lastCostCents: row.lastCostCents, adjustment: adj }, approvalId });
+      return row;
     });
-    const patch: Record<string, unknown> = { count: next };
-    // Receiving with a cost updates "last cost paid" — the latest point of the
-    // per-receipt history stored above.
-    if (isReceipt && unitCostCents != null) patch.lastCostCents = unitCostCents;
-    const [row] = await db.update(inventoryItems).set(patch).where(eq(inventoryItems.id, id)).returning();
-    return row;
   });
 
   app.get('/api/inventory/:id/history', async (req) => {
@@ -192,9 +213,12 @@ export async function inventoryRoutes(app: FastifyInstance) {
     schema: { body: { type: 'object', required: ['scheduledFor'], additionalProperties: false,
       properties: { scheduledFor: { type: 'string', minLength: 10, maxLength: 10 } } } },
   }, async (req, reply) => {
-    const [row] = await db.insert(cycleCounts).values(req.body as { scheduledFor: string }).returning();
-    reply.code(201);
-    return row;
+    return withTx(async (tx) => {
+      const [row] = await tx.insert(cycleCounts).values(req.body as { scheduledFor: string }).returning();
+      await audit(tx, req, { action: 'cycle_count.create', entity: 'cycle_count', entityId: row.id, after: row });
+      reply.code(201);
+      return row;
+    });
   });
 
   // Complete (v2, 2026-07-07 — blind count + variance review). The counted
@@ -226,75 +250,85 @@ export async function inventoryRoutes(app: FastifyInstance) {
       counts: { itemId: number; counted: number; reasonCode?: string; note?: string }[];
       nextScheduledFor?: string;
     };
-    const [cc] = await db.select().from(cycleCounts).where(eq(cycleCounts.id, id));
-    if (!cc) return reply.code(404).send({ error: 'Cycle count not found' });
-    if (cc.completedAt) return reply.code(409).send({ error: 'Already completed' });
+    // One transaction for the whole close-out: lines, adjustments, counts,
+    // usage rates, the session lock, the next session, and the audit row. The
+    // validation pass reads counts through it too, so nothing moves between
+    // "checked" and "booked".
+    return withTx(async (tx) => {
+      const [cc] = await tx.select().from(cycleCounts).where(eq(cycleCounts.id, id));
+      if (!cc) return reply.code(404).send({ error: 'Cycle count not found' });
+      if (cc.completedAt) return reply.code(409).send({ error: 'Already completed' });
 
-    const t = await inventorySettings();
-    const allItems = await db.select().from(inventoryItems);
-    const byId = new Map(allItems.map((i) => [i.id, i]));
+      const t = await inventorySettings(tx);
+      const allItems = await tx.select().from(inventoryItems);
+      const byId = new Map(allItems.map((i) => [i.id, i]));
 
-    // Pass 1 — validate against CURRENT counts (they may have moved since the
-    // client's review screen; the server's math is the one that binds).
-    const missingReason: { itemId: number; name: string }[] = [];
-    for (const c of counts) {
-      const item = byId.get(c.itemId);
-      if (!item) continue;
-      const v = varianceFor({ itemId: c.itemId, systemCount: item.count, counted: c.counted,
-        unitCostCents: costPerCountUnit(item) }, t);
-      if (v.aboveThreshold && !c.reasonCode) missingReason.push({ itemId: c.itemId, name: item.name });
-    }
-    if (missingReason.length > 0) {
-      return reply.code(400).send({
-        error: `Reason code required for ${missingReason.length} variance(s) above threshold`,
-        items: missingReason,
-      });
-    }
-
-    // Pass 2 — snapshot lines, book adjustments, reset counts.
-    let drift = 0;
-    const nowMs = Date.now();
-    for (const c of counts) {
-      const item = byId.get(c.itemId);
-      if (!item) continue;
-      const v = varianceFor({ itemId: c.itemId, systemCount: item.count, counted: c.counted,
-        unitCostCents: costPerCountUnit(item) }, t);
-      // A voluntarily-chosen reason on a small variance is kept — required
-      // only above threshold, never discarded.
-      await db.insert(cycleCountLines).values({
-        cycleCountId: id, itemId: c.itemId, systemCount: item.count, countedQty: c.counted,
-        unitCostCents: costPerCountUnit(item),
-        reasonCode: v.delta !== 0 ? c.reasonCode ?? null : null,
-        note: c.note ?? null,
-      });
-      if (v.delta !== 0) {
-        drift++;
-        await db.insert(inventoryAdjustments).values({
-          itemId: c.itemId, delta: v.delta,
-          reason: c.reasonCode ?? 'cycle_count',
-          note: c.note ?? null, createdBy: completedBy, cycleCountId: id,
-        });
-        await db.update(inventoryItems).set({ count: c.counted }).where(eq(inventoryItems.id, c.itemId));
+      // Pass 1 — validate against CURRENT counts (they may have moved since the
+      // client's review screen; the server's math is the one that binds).
+      const missingReason: { itemId: number; name: string }[] = [];
+      for (const c of counts) {
+        const item = byId.get(c.itemId);
+        if (!item) continue;
+        const v = varianceFor({ itemId: c.itemId, systemCount: item.count, counted: c.counted,
+          unitCostCents: costPerCountUnit(item) }, t);
+        if (v.aboveThreshold && !c.reasonCode) missingReason.push({ itemId: c.itemId, name: item.name });
       }
-    }
-    await db.update(cycleCounts)
-      .set({ completedAt: new Date().toISOString(), completedBy,
-        notes: `${counts.length} items counted, ${drift} adjusted` })
-      .where(eq(cycleCounts.id, id));
+      if (missingReason.length > 0) {
+        return reply.code(400).send({
+          error: `Reason code required for ${missingReason.length} variance(s) above threshold`,
+          items: missingReason,
+        });
+      }
 
-    // Rolling avg daily usage — needs the session marked complete first so the
-    // baseline lookup excludes this session's own lines by id.
-    for (const c of counts) {
-      if (byId.has(c.itemId)) await recomputeAvgDailyUse(c.itemId, c.counted, id, nowMs);
-    }
+      // Pass 2 — snapshot lines, book adjustments, reset counts.
+      let drift = 0;
+      const nowMs = Date.now();
+      const changes: { itemId: number; before: number; after: number; reason: string }[] = [];
+      for (const c of counts) {
+        const item = byId.get(c.itemId);
+        if (!item) continue;
+        const v = varianceFor({ itemId: c.itemId, systemCount: item.count, counted: c.counted,
+          unitCostCents: costPerCountUnit(item) }, t);
+        // A voluntarily-chosen reason on a small variance is kept — required
+        // only above threshold, never discarded.
+        await tx.insert(cycleCountLines).values({
+          cycleCountId: id, itemId: c.itemId, systemCount: item.count, countedQty: c.counted,
+          unitCostCents: costPerCountUnit(item),
+          reasonCode: v.delta !== 0 ? c.reasonCode ?? null : null,
+          note: c.note ?? null,
+        });
+        if (v.delta !== 0) {
+          drift++;
+          await tx.insert(inventoryAdjustments).values({
+            itemId: c.itemId, delta: v.delta,
+            reason: c.reasonCode ?? 'cycle_count',
+            note: c.note ?? null, createdBy: completedBy, cycleCountId: id,
+          });
+          await tx.update(inventoryItems).set({ count: c.counted }).where(eq(inventoryItems.id, c.itemId));
+          changes.push({ itemId: c.itemId, before: item.count, after: c.counted, reason: c.reasonCode ?? 'cycle_count' });
+        }
+      }
+      const [closed] = await tx.update(cycleCounts)
+        .set({ completedAt: new Date().toISOString(), completedBy,
+          notes: `${counts.length} items counted, ${drift} adjusted` })
+        .where(eq(cycleCounts.id, id)).returning();
 
-    // Auto-reschedule: completing a count ALWAYS queues the next one (default
-    // +7 days — the weekly rhythm the roll SKUs depend on). No human memory,
-    // no external calendar (deliberate — see TASKS.md Phase 11).
-    const next = nextScheduledFor
-      ?? new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-    await db.insert(cycleCounts).values({ scheduledFor: next });
-    return { ok: true, itemsCounted: counts.length, itemsAdjusted: drift, nextScheduledFor: next };
+      // Rolling avg daily usage — needs the session marked complete first so the
+      // baseline lookup excludes this session's own lines by id.
+      for (const c of counts) {
+        if (byId.has(c.itemId)) await recomputeAvgDailyUse(c.itemId, c.counted, id, nowMs, tx);
+      }
+
+      // Auto-reschedule: completing a count ALWAYS queues the next one (default
+      // +7 days — the weekly rhythm the roll SKUs depend on). No human memory,
+      // no external calendar (deliberate — see TASKS.md Phase 11).
+      const next = nextScheduledFor
+        ?? new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
+      const [queued] = await tx.insert(cycleCounts).values({ scheduledFor: next }).returning();
+      await audit(tx, req, { action: 'cycle_count.complete', entity: 'cycle_count', entityId: id,
+        before: cc, after: { ...closed, itemsCounted: counts.length, changes, nextCycleCountId: queued.id } });
+      return { ok: true, itemsCounted: counts.length, itemsAdjusted: drift, nextScheduledFor: next };
+    });
   });
 
   // Needs-ordering view: every item at/below its reorder point (Min), sorted
@@ -432,31 +466,36 @@ export async function inventoryRoutes(app: FastifyInstance) {
       } } },
   }, async (req, reply) => {
     const b = req.body as { materialId: number; color: string; nominalWidthIn: number; count?: number; lowStockThreshold?: number; vendor?: string; lastCostCents?: number };
-    const [material] = await db.select().from(materials).where(eq(materials.id, b.materialId));
-    if (!material) return reply.code(400).send({ error: 'Unknown material' });
-    if (!material.usesRoll) return reply.code(400).send({ error: 'Roll SKUs are only for roll (vinyl) materials' });
     const color = b.color.trim();
-    // The color must exist in the material's admin-defined list — a typo would
-    // create an orphan SKU the quote-time stock check silently never finds.
-    const colorError = await validateSkuColor(b.materialId, color);
-    if (colorError) return reply.code(400).send({ error: colorError });
     // One SKU per material + color + width. The DB unique index (migration
     // 0011) is the real guard — the racy app-level pre-check is gone; a
     // constraint violation maps to the same friendly 409.
+    let materialName = '';
     try {
-      const [row] = await db.insert(inventoryItems).values({
-        name: `${material.name} · ${color} · ${b.nominalWidthIn}in`,
-        materialId: b.materialId, color, nominalWidthIn: b.nominalWidthIn,
-        count: b.count ?? 0, lowStockThreshold: b.lowStockThreshold ?? 0,
-        vendor: b.vendor ?? null, lastCostCents: b.lastCostCents ?? null,
-        // Whole rolls by decision — see CLAUDE.md.
-        purchaseUnit: 'roll', countUnit: 'roll',
-      }).returning();
-      reply.code(201);
-      return row;
+      return await withTx(async (tx) => {
+        const [material] = await tx.select().from(materials).where(eq(materials.id, b.materialId));
+        if (!material) return reply.code(400).send({ error: 'Unknown material' });
+        if (!material.usesRoll) return reply.code(400).send({ error: 'Roll SKUs are only for roll (vinyl) materials' });
+        materialName = material.name;
+        // The color must exist in the material's admin-defined list — a typo would
+        // create an orphan SKU the quote-time stock check silently never finds.
+        const colorError = await validateSkuColor(b.materialId, color, tx);
+        if (colorError) return reply.code(400).send({ error: colorError });
+        const [row] = await tx.insert(inventoryItems).values({
+          name: `${material.name} · ${color} · ${b.nominalWidthIn}in`,
+          materialId: b.materialId, color, nominalWidthIn: b.nominalWidthIn,
+          count: b.count ?? 0, lowStockThreshold: b.lowStockThreshold ?? 0,
+          vendor: b.vendor ?? null, lastCostCents: b.lastCostCents ?? null,
+          // Whole rolls by decision — see CLAUDE.md.
+          purchaseUnit: 'roll', countUnit: 'roll',
+        }).returning();
+        await audit(tx, req, { action: 'inventory_item.create', entity: 'inventory_item', entityId: row.id, after: row });
+        reply.code(201);
+        return row;
+      });
     } catch (e) {
       if (isUniqueViolation(e)) {
-        return reply.code(409).send({ error: `A SKU for ${material.name} · ${color} · ${b.nominalWidthIn}in already exists` });
+        return reply.code(409).send({ error: `A SKU for ${materialName} · ${color} · ${b.nominalWidthIn}in already exists` });
       }
       throw e;
     }

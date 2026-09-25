@@ -2,12 +2,13 @@
 export interface Material {
   id: number; name: string; unit: string; costPerUnitCents: number; laborFactorPct: number; active: boolean;
   priceMode: string; rateCents: number; rate2Cents: number | null; minQty: number; colorMultiplier: boolean;
-  usesRoll: boolean; isAddon: boolean;
+  usesRoll: boolean; isAddon: boolean; archivedAt?: string | null;
 }
 export interface Customer {
   id: number; name: string; phone: string | null; email: string | null; notes: string | null;
   lastJobAt?: string | null;
   level: number;
+  archivedAt?: string | null; // archived = hidden from lists/pickers (ADR 0005)
 }
 export interface Job {
   id: number; clientRef: string | null; customerId: number | null;
@@ -48,14 +49,15 @@ export interface InventoryItem {
 }
 export interface Supplier {
   id: number; name: string; leadTimeDays: number; contact: string | null;
-  notes: string | null; active: boolean;
+  notes: string | null; active: boolean; archivedAt?: string | null;
 }
-export interface MaterialColor { id: number; materialId: number; name: string; }
+export interface MaterialColor { id: number; materialId: number; name: string; archivedAt?: string | null; }
 export interface Category {
   id: number; name: string; defaultUnit: string | null; tracksColor: boolean;
   defaultVendor: string | null; defaultSupplierId: number | null; active: boolean; sort: number;
+  archivedAt?: string | null;
 }
-export interface CategorySize { id: number; categoryId: number; label: string; sort: number; }
+export interface CategorySize { id: number; categoryId: number; label: string; sort: number; archivedAt?: string | null; }
 // Advisory stock-check result for the estimator (Phase 8).
 export interface StockResult {
   state: 'unknown' | 'in_stock' | 'suboptimal' | 'out_of_stock';

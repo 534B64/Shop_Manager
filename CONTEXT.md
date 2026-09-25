@@ -41,14 +41,16 @@ used in code, docs, or conversation, it means exactly this.
 
 - **Job** — the single aggregate for all work sold: a quote and an order are the
   *same record* at different lifecycle statuses, never two entities. Carries the
-  estimator inputs it was derived from, both prices (suggested and final), and a
-  soft-delete flag. Identified to humans by its **PO**.
+  estimator inputs it was derived from, and both prices (suggested and final).
+  "Removing" an order archives it (see **Archive**). Identified to humans by its
+  **PO**.
 - **Quote** — a Job whose status is `quote` (proof flow only). Simple jobs skip
   it and are born `acknowledged`.
 - **Order** — informal name for a Job past the quote stage. Not a separate table.
 - **Line** — one independently-priced unit of a Job: the *main item* (columns on
   the Job itself) plus zero or more *additional items* (`job_items` rows). Each
-  line has its own material, dimensions, qty, and color multiplier.
+  line has its own material, dimensions, qty, and color multiplier. When an edit
+  replaces a job's lines, the old ones are kept as history, never erased.
 - **PO** — auto-generated order key, `MMDDYY + 3-digit daily sequence`. Also the
   SignLab filename convention on the NAS (see File reference).
 - **Proof flow** — the optional long lifecycle (`quote → approved → design →
@@ -124,9 +126,20 @@ used in code, docs, or conversation, it means exactly this.
   account.
 - **Manager approval** — a manager (or admin) entering *their own* name + PIN
   at the moment a sensitive action happens (void, refund, unpaid pickup,
-  removing an order or customer, store-credit or stock corrections). A manager
+  removing an order, archiving or restoring a customer, store-credit or stock
+  corrections). A manager
   acting alone approves themselves. Every approval is logged permanently with
   who asked and who approved.
+
+### Records & history
+
+- **Archive** — what "delete" means everywhere in the app: the record is hidden
+  from lists and pickers but kept, still shows wherever older records point to
+  it, and can be restored. Nothing the shop has entered is ever erased.
+- **Audit log** — the permanent, append-only history of every change anyone
+  made: who, when, what it looked like before and after, and which manager
+  approved it when approval was needed. It can be read and exported, never
+  edited.
 
 ### Explicit non-concepts
 
