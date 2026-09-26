@@ -32,7 +32,7 @@ export default function CountGroup({ label, filter, draft, onCount }: {
                 </span>
               </label>
               <input id={id} inputMode="numeric" pattern="[0-9]*" autoComplete="off" value={v} placeholder="—"
-                aria-invalid={bad || undefined} onChange={(e) => onCount(i, e.target.value)}
+                aria-label={`Count of ${i.name}${i.countUnit ? ` (${i.countUnit})` : ''}`} aria-invalid={bad || undefined} onChange={(e) => onCount(i, e.target.value)}
                 className={`h-14 w-28 shrink-0 px-3 text-center text-headline-small tabular-nums rounded-t-shape-extra-small bg-surface-container-highest text-on-surface border-b-2 focus:border-primary ${bad ? 'border-error' : 'border-on-surface-variant'}`} />
             </li>
           );

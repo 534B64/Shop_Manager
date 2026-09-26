@@ -43,7 +43,7 @@ export default function InvoiceLinesTable({ inv }: { inv: InvoiceDetail }) {
       </table>
       <dl className="grid grid-cols-[1fr_auto] gap-x-6 gap-y-1 mt-3 ml-auto max-w-xs text-body-large tabular-nums">
         <dt className="text-on-surface-variant">Subtotal</dt><dd className="text-right">{formatCents(inv.subtotalCents)}</dd>
-        <dt className="text-on-surface-variant">Tax</dt><dd className="text-right">{formatCents(inv.taxCents)}</dd>
+        <dt className="text-on-surface-variant">Tax{inv.taxExempt ? ` (exempt: ${inv.taxExemptReason ?? '—'})` : ''}</dt><dd className="text-right">{formatCents(inv.taxCents)}</dd>
         {anyDiscount && <><dt className="text-on-surface-variant">Discount ({inv.discountPct}%)</dt><dd className="text-right">−{formatCents(inv.discountCents)}</dd></>}
         <dt className="text-title-large">Total</dt><dd className="text-right text-title-large">{formatCents(inv.totalCents)}</dd>
         {inv.returnedCents > 0 && <><dt className="text-on-surface-variant">Returned</dt><dd className="text-right">−{formatCents(inv.returnedCents)}</dd></>}

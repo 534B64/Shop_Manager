@@ -55,7 +55,7 @@ export default function NewReturnPage() {
         lines: toReturnLines(preview), ...(needsMethod ? { refundMethod: method } : {}) });
       setDone(ret);
     } catch (e) {
-      if (isDrawerClosed(e)) setError('Cash refunds need the drawer open. Open it (POS → Drawer) or pick another refund method.');
+      if (isDrawerClosed(e)) setError('Refunds need the drawer open. Open it (POS → Drawer), then save the return again.');
       else if (isNetworkError(e)) setError('No answer from the server — check the wifi and tap Save return again. It won’t be recorded twice.');
       else setError(errorText(e));
     } finally { setBusy(false); }

@@ -16,7 +16,7 @@ export function errorText(e: unknown, fallback = 'Something went wrong'): string
   return fallback;
 }
 
-/** A cash sale/payment refused because no drawer is open (409 drawer_closed, ADR 0007). */
+/** A sale/payment/refund refused because no drawer is open (409 drawer_closed, ADR 0007 D12 — any method). */
 export const isDrawerClosed = (e: unknown) => e instanceof ApiError && e.status === 409 && e.data.code === 'drawer_closed';
 
 /** The job is invoiced and the edit touched a locked field (409, ADR 0007) → that invoice's number. */

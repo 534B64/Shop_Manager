@@ -1,5 +1,6 @@
-// Today's counter sales: the total from the SQL summary (every payment since
-// local midnight, not just the newest rows), the list from the newest 12.
+// Today's counter sales: the total from the SQL summary (every payment on the
+// shop's local day — the server reads a plain date as a local day), the list
+// from the newest 12.
 import { EmptyState, LinearProgress, List, ListItem, Card, CardHeader } from '../../../components/m3';
 import { useQuery, withParams, type Page } from '../../../lib/query';
 import { formatCents } from '../../../lib/format';
@@ -8,11 +9,9 @@ import { localIsoDate } from '../shared/jobLogic';
 export interface PaymentRow { id: number; amountCents: number; method: string; kind: string; voidedAt: string | null; createdAt: string; jobTitle: string | null }
 interface Summary { paymentCount: number; paymentsCents: number }
 
-/** Local midnight as an ISO timestamp — "today" for the shop, not for UTC. */
-export const startOfToday = (now = new Date()) => new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
-
 export function useTodaySales() {
-  const summary = useQuery<Summary>(withParams('/api/reports/summary', { from: startOfToday() }));
+  const today = localIsoDate(new Date());
+  const summary = useQuery<Summary>(withParams('/api/reports/summary', { from: today, to: today }));
   const recent = useQuery<Page<PaymentRow>>('/api/payments?limit=12&offset=0');
   return { summary, recent, reload: () => { summary.reload(); recent.reload(); } };
 }

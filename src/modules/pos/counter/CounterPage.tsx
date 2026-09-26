@@ -7,6 +7,7 @@ import { formatCents } from '../../../lib/format';
 import PosHeader from '../PosHeader';
 import CustomerPicker from '../lib/CustomerPicker';
 import OpenDrawerForm from '../drawer/OpenDrawerForm';
+import TaxExemptField from '../lib/TaxExemptField';
 import type { DrawerView } from '../types';
 import DrawerStatusBar from './DrawerStatusBar';
 import AddItem from './AddItem';
@@ -30,11 +31,13 @@ export default function CounterPage() {
 
   const drawer = drawerQ.data?.drawer;
   const rate = taxQ.data?.ratePct ?? 0;
-  const totals = C.cartTotals(draft.cart, rate);
+  const totals = C.cartTotals(draft.cart, rate, draft.exempt.on);
   const problems = C.cartProblems(draft.cart, totals.totalCents);
+  const exemptProblem = C.exemptionProblem(draft.exempt);
   const cash = draft.method === 'cash';
   const tendered = digitsToCents(draft.tendered);
-  const needDrawer = cash && drawerQ.data != null && !drawer;
+  // Every tender needs an open drawer (D12), not just cash.
+  const needDrawer = drawerQ.data != null && !drawer;
   const cashShort = cash && tendered > 0 && tendered < totals.totalCents;
 
   const edit = (f: (c: C.CartLine[]) => C.CartLine[]) => setDraft((d) => ({ ...d, cart: f(d.cart) }));
@@ -46,11 +49,11 @@ export default function CounterPage() {
   });
 
   async function complete() {
-    if (busy || problems.length || !draft.method || cashShort || needDrawer || !taxQ.data) return;
+    if (busy || problems.length || exemptProblem || !draft.method || cashShort || needDrawer || !taxQ.data) return;
     setBusy(true); setError(null);
     try {
       const res = await post<SaleResult>('/api/pos/sale', {
-        clientRef: draft.clientRef, method: draft.method, lines: C.toSaleLines(draft.cart),
+        clientRef: draft.clientRef, method: draft.method, lines: C.toSaleLines(draft.cart), ...C.exemptionBody(draft.exempt),
         ...(draft.customer ? { customerId: draft.customer.id } : {}),
         ...(cash && tendered > 0 ? { tenderedCents: tendered } : {}),
       });
@@ -58,7 +61,7 @@ export default function CounterPage() {
       setDraft(newDraft());
       drawerQ.reload();
     } catch (e) {
-      if (isDrawerClosed(e)) { drawerQ.reload(); setError('The cash drawer is closed. Open it below (count the float), then complete the sale.'); }
+      if (isDrawerClosed(e)) { drawerQ.reload(); setError('The drawer is closed — every sale needs it open. Open it below (count the float), then complete the sale.'); }
       else if (isNetworkError(e)) setError('No answer from the server — check the wifi and tap Complete Sale again. It won’t charge twice.');
       else setError(errorText(e));
     } finally { setBusy(false); }
@@ -73,7 +76,7 @@ export default function CounterPage() {
     );
   }
 
-  const blocked = problems[0] ?? (!draft.method ? 'Pick how the customer pays.' : cashShort ? 'Cash tendered is less than the total.' : needDrawer ? 'Open the cash drawer first (below).' : null);
+  const blocked = problems[0] ?? exemptProblem ?? (!draft.method ? 'Pick how the customer pays.' : cashShort ? 'Cash tendered is less than the total.' : needDrawer ? 'Open the drawer first (below).' : null);
 
   return (
     <div>
@@ -84,14 +87,14 @@ export default function CounterPage() {
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_400px] items-start">
         <Card variant="outlined" aria-labelledby="cart-title">
           <CardHeader id="cart-title" title="Items" subtitle={draft.cart.length ? `${draft.cart.length} line${draft.cart.length === 1 ? '' : 's'}` : undefined} />
-          <AddItem onStock={(it) => addLine((c) => C.addStockLine(c, it, false))}
-            onCustom={(d) => addLine((c) => C.addFreeLine(c, d, null, false))} />
+          <AddItem onStock={(it) => addLine((c) => C.addStockLine(c, it))}
+            onCustom={(d) => addLine((c) => C.addFreeLine(c, d, null))} />
           {draft.cart.length === 0
             ? <EmptyState icon="cart" title="No items yet">Search stock above, or type what you’re selling and add it as a custom item.</EmptyState>
             : (
               <ul aria-label="Items in this sale" className="mt-2">
                 {draft.cart.map((l, i) => (
-                  <CartLineRow key={l.key} line={l} priced={totals.lines[i]} autoFocusPrice={l.key === lastAdded && l.unitPriceCents == null}
+                  <CartLineRow key={l.key} line={l} priced={totals.lines[i]} exempt={draft.exempt.on} autoFocusPrice={l.key === lastAdded && l.unitPriceCents == null}
                     onQty={(n) => edit((c) => C.setQty(c, l.key, n))} onPrice={(p) => edit((c) => C.setPrice(c, l.key, p))}
                     onTaxable={(t) => edit((c) => C.setTaxable(c, l.key, t))} onDescription={(d) => edit((c) => C.setDescription(c, l.key, d))}
                     onRemove={() => edit((c) => C.removeLine(c, l.key))} />
@@ -102,10 +105,11 @@ export default function CounterPage() {
 
         <Card variant="outlined" aria-labelledby="pay-title" className="flex flex-col gap-4 lg:sticky lg:top-20">
           <CustomerPicker value={draft.customer} onChange={(customer) => setDraft((d) => ({ ...d, customer }))} />
+          <TaxExemptField value={draft.exempt} onChange={(exempt) => setDraft((d) => ({ ...d, exempt }))} />
 
           <dl className="grid grid-cols-2 gap-y-1 text-body-large tabular-nums" aria-label="Totals">
             <dt className="text-on-surface-variant">Subtotal</dt><dd className="text-right">{formatCents(totals.subtotalCents)}</dd>
-            <dt className="text-on-surface-variant">Tax{taxQ.data ? ` (${rate}% on taxed lines)` : ''}</dt><dd className="text-right">{formatCents(totals.taxCents)}</dd>
+            <dt className="text-on-surface-variant">Tax{draft.exempt.on ? ' (exempt)' : taxQ.data ? ` (${rate}% on taxed lines)` : ''}</dt><dd className="text-right">{formatCents(totals.taxCents)}</dd>
             <dt id="pay-title" className="text-headline-small">Total</dt>
             <dd className="text-right text-display-small" aria-live="polite">{formatCents(totals.totalCents)}</dd>
           </dl>
@@ -114,7 +118,7 @@ export default function CounterPage() {
           <PaymentMethods value={draft.method} onChange={(method) => setDraft((d) => ({ ...d, method }))} />
           {needDrawer && (
             <div className="rounded-shape-medium bg-warning-container text-on-warning-container p-4">
-              <p className="text-title-medium mb-3">The cash drawer is closed. Count the starting cash to open it:</p>
+              <p className="text-title-medium mb-3">The drawer is closed — every sale (cash, card or check) needs it open. Count the starting cash to open it:</p>
               <div className="rounded-shape-small bg-surface p-3"><OpenDrawerForm compact onOpened={() => { setError(null); drawerQ.reload(); }} /></div>
             </div>
           )}

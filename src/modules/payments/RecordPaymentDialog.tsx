@@ -10,7 +10,7 @@ import { METHOD_LABELS } from '../pos/types';
 import { PAYMENT_METHODS, checkPayment, overpayCents, type Balance } from './logic';
 import { errorText, isDrawerClosed, isNetworkError } from '../../lib/errorText';
 
-/** Take a payment on a job with a balance. Cash can record tendered + change; cash needs the drawer. */
+/** Take a payment on a job with a balance. Cash can record tendered + change; every payment needs the drawer open (D12). */
 export default function RecordPaymentDialog({ job, onClose, onDone }: { job: Balance; onClose: () => void; onDone: () => void }) {
   const nav = useNavigate();
   const [amount, setAmount] = useState((job.owedCents / 100).toFixed(2));
@@ -38,7 +38,7 @@ export default function RecordPaymentDialog({ job, onClose, onDone }: { job: Bal
       } else showSnackbar(`Payment recorded${change}`);
       onDone();
     } catch (e) {
-      if (isDrawerClosed(e)) { setDrawerClosed(true); setError('The cash drawer is closed — open it below, then Save again.'); }
+      if (isDrawerClosed(e)) { setDrawerClosed(true); setError('The drawer is closed — every payment needs it open. Open it below, then Save again.'); }
       else if (isNetworkError(e)) setError('No answer from the server — tap Save again. It won’t record twice.');
       else setError(errorText(e));
     } finally { setBusy(false); }
@@ -54,7 +54,7 @@ export default function RecordPaymentDialog({ job, onClose, onDone }: { job: Bal
       <form className="flex flex-col gap-3" onSubmit={(e) => { e.preventDefault(); void save(); }}>
         <TextField label="Amount $" inputMode="decimal" value={amount} autoFocus onChange={(e) => { setAmount(e.target.value); setOverOk(false); }}
           error={amount.trim() && check.amountCents == null ? check.problem : null} />
-        <PaymentMethods value={method} onChange={(m) => { setMethod(m); setDrawerClosed(false); }} methods={PAYMENT_METHODS} labels={METHOD_LABELS} />
+        <PaymentMethods value={method} onChange={setMethod} methods={PAYMENT_METHODS} labels={METHOD_LABELS} />
         {method === 'cash' && (
           <TextField label="Cash tendered $ (optional)" inputMode="decimal" value={tendered} onChange={(e) => setTendered(e.target.value)}
             error={tendered.trim() ? check.problem : null}
@@ -69,7 +69,7 @@ export default function RecordPaymentDialog({ job, onClose, onDone }: { job: Bal
         )}
         {error && <p role="alert" className="text-body-medium text-error">{error}</p>}
       </form>
-        {drawerClosed && method === 'cash' && <div className="mt-3 rounded-shape-small border border-outline-variant p-3"><OpenDrawerForm compact onOpened={() => { setDrawerClosed(false); setError(null); }} /></div>}
+        {drawerClosed && <div className="mt-3 rounded-shape-small border border-outline-variant p-3"><OpenDrawerForm compact onOpened={() => { setDrawerClosed(false); setError(null); }} /></div>}
     </Dialog>
   );
 }

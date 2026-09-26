@@ -25,7 +25,7 @@ export default function PaymentsPage() {
       <div className="flex flex-wrap items-end justify-between gap-3 mb-4">
         <div>
           <h1 className="text-headline-medium">Payments</h1>
-          <p className="text-body-medium text-on-surface-variant">Record-only — cash, checks and cards are handled outside the system. Cash needs the drawer open.</p>
+          <p className="text-body-medium text-on-surface-variant">Record-only — cash, checks and cards are handled outside the system. Every payment and refund needs the drawer open.</p>
         </div>
         <Button variant="outlined" touch to="/pos">Counter sale</Button>
       </div>

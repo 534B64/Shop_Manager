@@ -2,7 +2,7 @@
 // drawer) in this browser tab. The clientRef lives with the cart: one sale,
 // one ref, so a retry after a dropped connection can never charge twice.
 import { useEffect, useState } from 'react';
-import type { CartLine } from './cart';
+import type { CartLine, TaxExemption } from './cart';
 import type { PickedCustomer } from '../lib/CustomerPicker';
 import { newRef } from '../../../lib/ref';
 
@@ -12,10 +12,11 @@ export interface SaleDraft {
   customer: PickedCustomer | null;
   method: string;
   tendered: string;
+  exempt: TaxExemption;
 }
 
 const KEY = 'dp-pos-sale';
-export const newDraft = (): SaleDraft => ({ clientRef: newRef(), cart: [], customer: null, method: '', tendered: '' });
+export const newDraft = (): SaleDraft => ({ clientRef: newRef(), cart: [], customer: null, method: '', tendered: '', exempt: { on: false, reason: '' } });
 
 function load(): SaleDraft {
   try {

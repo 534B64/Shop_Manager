@@ -6,13 +6,14 @@ import { paidNetCents } from '../returns/plan';
 import { METHOD_LABELS, type InvoiceDetail } from '../types';
 import { errorText, isDrawerClosed } from '../../../lib/errorText';
 
-/** Void = cancel the whole sale: refund what was paid, put stock back. Manager approval (the shared dialog). */
+/** Void = cancel the whole sale: refund what was paid, put stock back. Manager approval (the shared dialog).
+ *  Default (D11): a counter sale's order is cancelled; a job invoice's order stays open to fix and re-invoice. */
 export default function VoidDialog({ inv, open, onClose, onDone }: {
   inv: InvoiceDetail; open: boolean; onClose: () => void; onDone: () => void;
 }) {
   const [reason, setReason] = useState('');
   const [method, setMethod] = useState('');
-  const [keepJob, setKeepJob] = useState(false);
+  const [keepJob, setKeepJob] = useState(inv.source === 'job');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const paid = paidNetCents(inv.payments);
@@ -21,11 +22,11 @@ export default function VoidDialog({ inv, open, onClose, onDone }: {
     if (!reason.trim() || busy) return;
     setBusy(true); setError(null);
     try {
-      await post(`/api/invoices/${inv.id}/void`, { reason: reason.trim(), ...(method ? { refundMethod: method } : {}), ...(keepJob ? { keepJob: true } : {}) });
+      await post(`/api/invoices/${inv.id}/void`, { reason: reason.trim(), ...(method ? { refundMethod: method } : {}), keepJob });
       showSnackbar(`Invoice ${inv.numberDisplay} voided`);
       onDone();
     } catch (e) {
-      setError(isDrawerClosed(e) ? 'The refund includes cash and the drawer is closed. Open the drawer (POS → Drawer) or refund another way.' : errorText(e));
+      setError(isDrawerClosed(e) ? 'This void refunds money and the drawer is closed. Open the drawer (POS → Drawer), then void again.' : errorText(e));
     } finally { setBusy(false); }
   }
 
@@ -47,10 +48,8 @@ export default function VoidDialog({ inv, open, onClose, onDone }: {
             {Object.entries(METHOD_LABELS).map(([m, l]) => <option key={m} value={m}>{l}</option>)}
           </Select>
         )}
-        {inv.source === 'job' && (
-          <Checkbox label="Keep the order open to fix and re-invoice (otherwise it’s cancelled)" checked={keepJob}
-            onChange={(e) => setKeepJob(e.target.checked)} />
-        )}
+        <Checkbox label="Keep the order open to fix and re-invoice (otherwise it’s cancelled)" checked={keepJob}
+          onChange={(e) => setKeepJob(e.target.checked)} />
         {error && <p role="alert" className="text-body-medium text-error">{error}</p>}
       </form>
     </Dialog>

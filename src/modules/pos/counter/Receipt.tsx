@@ -57,7 +57,9 @@ export default function Receipt({ sale, onNewSale }: { sale: SaleResult; onNewSa
       {sale.invoice && (
         <dl className="grid grid-cols-2 gap-y-1 mt-3 text-body-large tabular-nums">
           <dt className="text-on-surface-variant">Subtotal</dt><dd className="text-right">{formatCents(sale.invoice.subtotalCents)}</dd>
-          <dt className="text-on-surface-variant">Tax</dt><dd className="text-right">{formatCents(sale.invoice.taxCents)}</dd>
+          <dt className="text-on-surface-variant">
+            Tax{sale.invoice.taxExempt ? ` (exempt: ${sale.invoice.taxExemptReason ?? '—'})` : ` (${sale.invoice.taxRatePct}%)`}
+          </dt><dd className="text-right">{formatCents(sale.invoice.taxCents)}</dd>
           <dt className="text-title-large">Total</dt><dd className="text-right text-title-large">{formatCents(sale.invoice.totalCents)}</dd>
           {pay && <><dt className="text-on-surface-variant">Paid ({methodLabel(pay.method)})</dt><dd className="text-right">{formatCents(pay.amountCents)}</dd></>}
           {pay?.tenderedCents != null && <><dt className="text-on-surface-variant">Cash tendered</dt><dd className="text-right">{formatCents(pay.tenderedCents)}</dd></>}

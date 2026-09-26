@@ -6,11 +6,14 @@ export function formatWhen(iso: string | null | undefined): string {
   return d.toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
 }
 
-/** Today as yyyy-mm-dd (UTC, matching how the server stores and filters timestamps). */
-export const todayIso = (now = new Date()) => now.toISOString().slice(0, 10);
+const pad = (n: number) => String(n).padStart(2, '0');
 
-/** {from, to} for the last `days` days ending today (1 = today only). */
+/** Today as yyyy-mm-dd, the shop's LOCAL day — the server reads a date-only
+ *  from/to as a local day too (server/lib/dates.ts). */
+export const todayIso = (now = new Date()) => `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
+/** {from, to} for the last `days` local days ending today (1 = today only). */
 export function lastDays(days: number, now = new Date()) {
-  const from = new Date(now.getTime() - (days - 1) * 86_400_000);
+  const from = new Date(now.getFullYear(), now.getMonth(), now.getDate() - (days - 1));
   return { from: todayIso(from), to: todayIso(now) };
 }

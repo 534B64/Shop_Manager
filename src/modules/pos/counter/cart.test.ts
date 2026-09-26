@@ -1,9 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   addFreeLine, addStockLine, setQty, setPrice, setTaxable, removeLine, cartTotals, cartProblems,
-  toSaleLines, isOverride, clampQty, type CartLine,
+  toSaleLines, isOverride, clampQty, exemptionProblem, exemptionBody, type CartLine,
 } from './cart';
-import { priceInvoice } from '../../../../shared/invoice';
+import { priceInvoice, priceCounterSale } from '../../../../shared/invoice';
 import { keypadPress, digitsToCents, centsToDigits, quickTenders } from './keypad';
 
 describe('cart operations', () => {
@@ -40,6 +40,25 @@ describe('cart operations', () => {
     expect(t).toEqual(server);
     expect(t.lines.map((l) => l.taxCents)).toEqual([82, 83, 0]);
     expect(t.totalCents).toBe(999 + 1005 + 500 + 165);
+  });
+
+  it('new lines are taxed by default (D10); a tax-exempt sale taxes nothing, same as the server', () => {
+    let c = addFreeLine([], 'Decal', 1000);
+    c = addStockLine(c, { id: 3, name: 'Flag' });
+    c = setPrice(c, c[1].key, 500);
+    expect(c.map((l) => l.taxable)).toEqual([true, true]);
+    expect(cartTotals(c, 8.25)).toMatchObject({ taxCents: 83 + 41, totalCents: 1624 });
+    const exempt = cartTotals(c, 8.25, true);
+    expect(exempt).toMatchObject({ taxCents: 0, totalCents: 1500 });
+    expect(exempt).toEqual(priceCounterSale([{ qty: 1, subtotalCents: 1000, taxable: true }, { qty: 1, subtotalCents: 500, taxable: true }], 8.25, { taxExempt: true }));
+  });
+
+  it('a tax exemption needs a short reason and sends it trimmed', () => {
+    expect(exemptionProblem({ on: false, reason: '' })).toBeNull();
+    expect(exemptionProblem({ on: true, reason: ' ' })).toMatch(/say why/);
+    expect(exemptionProblem({ on: true, reason: 'Nonprofit' })).toBeNull();
+    expect(exemptionBody({ on: true, reason: ' Resale certificate ' })).toEqual({ taxExempt: true, taxExemptReason: 'Resale certificate' });
+    expect(exemptionBody({ on: false, reason: 'Nonprofit' })).toEqual({});
   });
 
   it('lists what blocks the sale', () => {

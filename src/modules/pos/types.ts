@@ -8,6 +8,8 @@ export interface InvoiceHeader {
   subtotalCents: number; taxCents: number; discountPct: number; discountCents: number; totalCents: number;
   drawerSessionId: number | null; createdBy: string | null; createdAt: string;
   status: 'issued' | 'voided'; returnedCents: number;
+  /** A counter sale rung up tax-exempt (D10), and why. */
+  taxExempt: boolean; taxExemptReason: string | null;
 }
 
 export interface InvoiceLine {

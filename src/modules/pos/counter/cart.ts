@@ -1,7 +1,8 @@
 // Counter-sale cart: pure operations + the totals preview. Totals use the
-// same shared/invoice.ts priceInvoice the server runs, so the screen and the
-// invoice agree to the cent. Money is integer cents throughout.
-import { priceInvoice, type PricedInvoice } from '../../../../shared/invoice';
+// same shared/invoice.ts priceCounterSale the server runs, so the screen and
+// the invoice agree to the cent. Lines are taxed unless the chip is turned off
+// (owner decision D10); a tax-exempt sale taxes nothing. Integer cents.
+import { priceCounterSale, taxExemptReason, type PricedInvoice } from '../../../../shared/invoice';
 
 export const MAX_QTY = 9999;
 export const MAX_LINES = 50;
@@ -23,12 +24,12 @@ export interface CartLine {
 let seq = 0;
 const newKey = () => `l${Date.now().toString(36)}${++seq}`;
 
-export function addFreeLine(cart: CartLine[], description: string, unitPriceCents: number | null, taxable: boolean): CartLine[] {
+export function addFreeLine(cart: CartLine[], description: string, unitPriceCents: number | null, taxable = true): CartLine[] {
   return [...cart, { key: newKey(), description: description.trim(), qty: 1, unitPriceCents, taxable }];
 }
 
 /** A stock item goes on one line (the server refuses duplicates) — adding it again bumps qty. */
-export function addStockLine(cart: CartLine[], item: { id: number; name: string; count?: number }, taxable: boolean): CartLine[] {
+export function addStockLine(cart: CartLine[], item: { id: number; name: string; count?: number }, taxable = true): CartLine[] {
   const hit = cart.find((l) => l.inventoryItemId === item.id);
   if (hit) return setQty(cart, hit.key, hit.qty + 1);
   return [...cart, { key: newKey(), description: item.name, qty: 1, unitPriceCents: null, taxable,
@@ -49,9 +50,21 @@ export const isOverride = (l: CartLine) =>
   l.suggestedUnitPriceCents != null && l.unitPriceCents != null && l.unitPriceCents !== l.suggestedUnitPriceCents;
 
 /** Per-line tax + totals, exactly as the server will price the sale (no discount at the counter). */
-export function cartTotals(cart: CartLine[], taxRatePct: number): PricedInvoice {
-  return priceInvoice(cart.map((l) => ({ qty: l.qty, subtotalCents: l.qty * (l.unitPriceCents ?? 0), taxable: l.taxable })), taxRatePct, 0);
+export function cartTotals(cart: CartLine[], taxRatePct: number, taxExempt = false): PricedInvoice {
+  return priceCounterSale(cart.map((l) => ({ qty: l.qty, subtotalCents: l.qty * (l.unitPriceCents ?? 0), taxable: l.taxable })),
+    taxRatePct, { taxExempt });
 }
+
+/** The sale-level exemption: off, or on with the reason the server needs. */
+export interface TaxExemption { on: boolean; reason: string }
+
+/** Why the exemption blocks the sale (null = fine). */
+export const exemptionProblem = (x: TaxExemption) =>
+  x.on && !taxExemptReason(x.reason) ? 'Tax exempt: say why (e.g. resale certificate).' : null;
+
+/** Body fields for POST /api/pos/sale. */
+export const exemptionBody = (x: TaxExemption) =>
+  x.on ? { taxExempt: true, taxExemptReason: taxExemptReason(x.reason) ?? '' } : {};
 
 /** Why the sale can't be completed yet (empty = ready). */
 export function cartProblems(cart: CartLine[], totalCents: number): string[] {

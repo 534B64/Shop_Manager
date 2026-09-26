@@ -19,7 +19,7 @@ export default function DrawerStatusBar({ drawer, loading, error, onRetry }: {
         {error ? <>Couldn’t check the drawer: {error}</>
           : !known ? (loading ? 'Checking the cash drawer…' : 'Drawer status unknown')
           : open ? <><b>Drawer #{drawer.id} open</b> · {drawer.openedByName ?? 'someone'} opened it {formatWhen(drawer.openedAt)} · float {formatCents(drawer.openingFloatCents)}</>
-          : <><b>Drawer closed</b> — card and check sales work; cash needs the drawer opened first.</>}
+          : <><b>Drawer closed</b> — open it before taking any payment (cash, card or check).</>}
       </p>
       {error
         ? <Button variant="elevated" touch onClick={onRetry}>Try again</Button>

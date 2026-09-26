@@ -18,8 +18,9 @@ describe('payments page rules', () => {
     expect(checkPayment('12.50', 'cash', 'abc').problem).toMatch(/isn’t/);
   });
 
-  it('builds date ranges ending today', () => {
-    const now = new Date('2026-09-26T15:00:00Z');
+  it('builds local date ranges ending today (an evening stays on its own day)', () => {
+    const now = new Date(2026, 8, 26, 20, 30); // 8:30 pm local
+    expect(lastDays(30, now).from).toBe('2026-08-28');
     expect(todayIso(now)).toBe('2026-09-26');
     expect(lastDays(1, now)).toEqual({ from: '2026-09-26', to: '2026-09-26' });
     expect(lastDays(7, now)).toEqual({ from: '2026-09-20', to: '2026-09-26' });

@@ -7,8 +7,8 @@ import type { PricedLine } from '../../../../shared/invoice';
 const dollars = (c: number | null) => (c == null ? '' : (c / 100).toFixed(2));
 
 /** One cart line: qty stepper, price each, tax toggle, line tax + total. */
-export default function CartLineRow({ line, priced, autoFocusPrice, onQty, onPrice, onTaxable, onDescription, onRemove }: {
-  line: CartLine; priced: PricedLine; autoFocusPrice: boolean;
+export default function CartLineRow({ line, priced, exempt, autoFocusPrice, onQty, onPrice, onTaxable, onDescription, onRemove }: {
+  line: CartLine; priced: PricedLine; exempt: boolean; autoFocusPrice: boolean;
   onQty: (n: number) => void; onPrice: (c: number | null) => void; onTaxable: (t: boolean) => void;
   onDescription: (d: string) => void; onRemove: () => void;
 }) {
@@ -49,12 +49,13 @@ export default function CartLineRow({ line, priced, autoFocusPrice, onQty, onPri
           autoComplete="off" error={priceBad ? 'Not a price' : line.unitPriceCents == null ? 'Enter a price' : null}
           onChange={(e) => { setPrice(e.target.value); onPrice(e.target.value.trim() === '' ? null : parseDollarsToCents(e.target.value)); }} />
 
-        <Chip kind="filter" touch selected={line.taxable} onClick={() => onTaxable(!line.taxable)}>Tax</Chip>
+        <Chip kind="filter" touch selected={line.taxable && !exempt} disabled={exempt} aria-label={`Charge tax on ${line.description || 'this line'}`}
+          onClick={() => onTaxable(!line.taxable)}>Tax</Chip>
 
         <div className="ml-auto text-right">
           <p className="text-title-large tabular-nums">{formatCents(priced.totalCents)}</p>
           <p className="text-body-small text-on-surface-variant tabular-nums">
-            {line.taxable ? `tax ${formatCents(priced.taxCents)} (${priced.taxRatePct}%)` : 'no tax'}
+            {exempt ? 'no tax (exempt sale)' : line.taxable ? `tax ${formatCents(priced.taxCents)} (${priced.taxRatePct}%)` : 'no tax'}
           </p>
         </div>
       </div>

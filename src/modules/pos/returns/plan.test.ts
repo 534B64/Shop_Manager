@@ -10,7 +10,7 @@ const line = (over: Partial<InvoiceLine>): InvoiceLine => ({
 
 const invoice = (lines: InvoiceLine[], paid: number, returnedCents = 0): InvoiceDetail => ({
   id: 9, number: 12, numberDisplay: '000012', jobId: 4, customerId: null, customerName: null, jobPo: null, title: 'T',
-  source: 'counter_sale', taxRatePct: 8.25, subtotalCents: 0, taxCents: 0, discountPct: 0, discountCents: 0,
+  source: 'counter_sale', taxRatePct: 8.25, taxExempt: false, taxExemptReason: null, subtotalCents: 0, taxCents: 0, discountPct: 0, discountCents: 0,
   totalCents: lines.reduce((s, l) => s + l.totalCents, 0), drawerSessionId: null, createdBy: null, createdAt: '',
   status: 'issued', returnedCents, lines, void: null, returns: [],
   payments: paid ? [{ id: 1, jobId: 4, amountCents: paid, method: 'card', kind: 'payment', voidedAt: null, voidReason: null, note: null,
