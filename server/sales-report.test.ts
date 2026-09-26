@@ -16,7 +16,7 @@ const as = (u: TestUser) => (opts: InjectOptions) => app.inject({ ...opts, heade
 const ref = () => `ref-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 const sale = async (payload: Record<string, unknown>) => {
   const r = await as(admin)({ method: 'POST', url: '/api/pos/sale',
-    payload: { clientRef: ref(), title: 'Sale', amountCents: 1000, method: 'card', ...payload } });
+    payload: { clientRef: ref(), title: 'Sale', amountCents: 1000, method: 'card', taxable: false, ...payload } });
   expect(r.statusCode).toBe(201);
   return r.json() as { invoice: { id: number; number: number } };
 };
@@ -59,7 +59,8 @@ describe('GET /api/reports/sales', () => {
     const z = closed.zReport;
     expect(closed.id).toBe(open.id);
 
-    const today = new Date().toISOString().slice(0, 10);
+    const d = new Date(); // the shop's local day (server/lib/dates.ts)
+    const today = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
     const r = (await as(manager)({ method: 'GET', url: `/api/reports/sales?from=${today}&to=${today}` })).json();
     expect(r.sales).toEqual(z.sales);
     expect(r.voids).toEqual(z.voids);

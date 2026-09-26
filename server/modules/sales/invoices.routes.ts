@@ -1,14 +1,15 @@
 // Invoices (ADR 0007): list, by number, invoice a job by hand, and void.
 import type { FastifyInstance } from 'fastify';
-import { and, desc, eq, gte, isNull, isNotNull, lt, lte, sql, type SQL } from 'drizzle-orm';
+import { and, desc, eq, isNull, isNotNull, lt, sql, type SQL } from 'drizzle-orm';
 import { db, withTx } from '../../db/index.js';
 import { jobs, payments, invoices, invoiceLines, invoiceVoids, salesReturns, salesReturnLines } from '../../db/schema/index.js';
 import { audit } from '../audit/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
 import { recordReturn } from '../inventory/index.js';
-import { recordPayment, paidNetCents, openDrawer } from '../payments/index.js';
+import { recordPayment, paidNetCents, openDrawer, requireOpenDrawer } from '../payments/index.js';
 import { SalesError, invoiceJob, invoiceHeader, invoiceDetail } from './service.js';
-import { refusable, pageLimit, endOfDay } from './http.js';
+import { refusable, pageLimit } from './http.js';
+import { dateRangeConds } from '../../lib/dates.js';
 import { parseInvoiceNumber, TENDER_METHODS } from '../../../shared/invoice.js';
 
 export async function invoiceRoutes(app: FastifyInstance) {
@@ -18,8 +19,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
       status?: string; limit?: string; before?: string };
     const limit = pageLimit(q.limit);
     const conds: SQL[] = [];
-    if (q.from) conds.push(gte(invoices.createdAt, q.from));
-    if (q.to) conds.push(lte(invoices.createdAt, endOfDay(q.to)));
+    conds.push(...dateRangeConds(invoices.createdAt, q.from, q.to));
     if (q.customerId) conds.push(eq(invoices.customerId, Number(q.customerId)));
     if (q.jobId) conds.push(eq(invoices.jobId, Number(q.jobId)));
     if (q.number) {
@@ -71,8 +71,10 @@ export async function invoiceRoutes(app: FastifyInstance) {
   // Void: cancels the whole invoice. The invoice and its lines are never
   // touched — a linked void record is written, the stock the sale deducted
   // goes back, and what the customer paid is refunded (one refund row per
-  // original tender, or all to `refundMethod`). The job is archived (the sale
-  // is cancelled) unless keepJob, which unlocks it for editing + re-invoicing.
+  // original tender, or all to `refundMethod`). Default by source (D11): a
+  // counter sale's job is archived (the sale is cancelled); a job invoice's job
+  // stays open, unlocked, to be fixed and re-invoiced. `keepJob` overrides.
+  // A void that refunds money needs the open drawer (D12).
   app.post('/api/invoices/:id/void', {
     schema: { body: { type: 'object', required: ['reason'], additionalProperties: false,
       properties: {
@@ -89,14 +91,16 @@ export async function invoiceRoutes(app: FastifyInstance) {
       if (!inv) throw new SalesError(404, 'Invoice not found');
       const [already] = await tx.select().from(invoiceVoids).where(eq(invoiceVoids.invoiceId, id));
       if (already) throw new SalesError(409, 'Invoice already voided');
+      const paidNet = await paidNetCents(inv.jobId, tx);
+      if (paidNet > 0) await requireOpenDrawer(tx);
+      const keepJob = body.keepJob ?? inv.source === 'job';
       const approver = await requireApproval(req, reply, { action: 'invoice.void', entity: 'invoice', entityId: id,
-        reason: body.reason, details: { number: inv.number, totalCents: inv.totalCents } });
+        reason: body.reason, details: { number: inv.number, totalCents: inv.totalCents, keepJob } });
       if (!approver) return reply;
       const [job] = await tx.select().from(jobs).where(eq(jobs.id, inv.jobId));
 
       // Refund plan: what's been paid, back by the way it came in.
       const live = await tx.select().from(payments).where(and(eq(payments.jobId, inv.jobId), isNull(payments.voidedAt)));
-      const paidNet = await paidNetCents(inv.jobId, tx);
       const byMethod = new Map<string, number>();
       for (const p of live) byMethod.set(p.method, (byMethod.get(p.method) ?? 0) + (p.kind === 'refund' ? -p.amountCents : p.amountCents));
       let plan: { method: string; amountCents: number }[] = [];
@@ -116,7 +120,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
       const netTaxCents = inv.taxCents - rets.reduce((s, r) => s + r.tax, 0);
       const drawer = await openDrawer(tx);
       const [v] = await tx.insert(invoiceVoids).values({
-        invoiceId: id, reason: body.reason, refundCents, netTotalCents, netTaxCents, jobArchived: !body.keepJob,
+        invoiceId: id, reason: body.reason, refundCents, netTotalCents, netTaxCents, jobArchived: !keepJob,
         approvalId: approver.approvalId, drawerSessionId: drawer?.id ?? null,
         createdBy: req.user!.name, userId: req.user!.id,
       }).returning();
@@ -145,7 +149,7 @@ export async function invoiceRoutes(app: FastifyInstance) {
         restocked.push({ inventoryItemId: l.inventoryItemId, qty });
       }
 
-      if (!body.keepJob && !job.deletedAt) {
+      if (!keepJob && !job.deletedAt) {
         const deletedAt = new Date().toISOString();
         await tx.update(jobs).set({ deletedAt }).where(eq(jobs.id, job.id));
         await audit(tx, req, { action: 'job.archive', entity: 'job', entityId: job.id,

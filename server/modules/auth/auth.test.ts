@@ -218,10 +218,11 @@ describe('manager approval', () => {
     expect(await approvalsFor('payment.void', pay.id)).toHaveLength(0);
   });
 
-  it('gates refunds, unpaid pickup, job removal, and manual stock changes', async () => {
-    const { job } = await paidJob();
+  it('gates refunds over the threshold, unpaid pickup, job removal, and manual stock changes', async () => {
+    const { job } = await paidJob(); // $50 paid; a refund over $50 (the default threshold) needs a manager
+    await as(cashier, { method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 2000, method: 'cash' } });
     const refund = await as(cashier, { method: 'POST', url: '/api/payments', payload: {
-      clientRef: ref(), jobId: job.id, amountCents: 100, method: 'cash', kind: 'refund' } });
+      clientRef: ref(), jobId: job.id, amountCents: 6000, method: 'cash', kind: 'refund' } });
     expect(refund.json().error).toBe('approval_required');
 
     const owing = (await as(cashier, { method: 'POST', url: '/api/jobs', payload: {

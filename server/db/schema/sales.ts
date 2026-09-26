@@ -1,5 +1,5 @@
 // Phase 3 (ADR 0007): invoices, invoice voids, returns, the number sequence,
-// and cash drawer sessions. Mirrors migration 0016 — every table here is
+// and cash drawer sessions. Mirrors migrations 0016–0018 — every table here is
 // append-only by trigger except drawer_sessions' one-time close.
 import { sql } from 'drizzle-orm';
 import { sqliteTable, text, integer, real, index, uniqueIndex } from 'drizzle-orm/sqlite-core';
@@ -58,6 +58,9 @@ export const invoices = sqliteTable('invoices', {
   createdBy: text('created_by'),
   userId: integer('user_id').references(() => users.id),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
+  // Migration 0018 (D10): a counter sale rung up without tax, and why.
+  taxExempt: integer('tax_exempt', { mode: 'boolean' }).notNull().default(false),
+  taxExemptReason: text('tax_exempt_reason'),
 }, (t) => ({
   numberUnique: uniqueIndex('invoices_number_unique').on(t.number),
   createdAtIdx: index('invoices_created_at_idx').on(t.createdAt),

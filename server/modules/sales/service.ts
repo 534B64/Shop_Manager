@@ -52,7 +52,7 @@ export interface NewLine extends PricedLine {
 /** Insert an invoice + its lines (+ audit row) with the next number. */
 export async function insertInvoice(tx: Db, req: FastifyRequest, opts: {
   job: Job; source: 'job' | 'counter_sale'; taxRatePct: number; discountPct: number; lines: NewLine[];
-  drawerSessionId: number | null;
+  drawerSessionId: number | null; taxExempt?: boolean; taxExemptReason?: string | null;
 }) {
   const { job } = opts;
   let customerName: string | null = null;
@@ -68,6 +68,7 @@ export async function insertInvoice(tx: Db, req: FastifyRequest, opts: {
     subtotalCents: sum((l) => l.subtotalCents), taxCents: sum((l) => l.taxCents),
     discountPct: opts.discountPct, discountCents: sum((l) => l.discountCents), totalCents: sum((l) => l.totalCents),
     drawerSessionId: opts.drawerSessionId, createdBy: req.user!.name, userId: req.user!.id,
+    taxExempt: !!opts.taxExempt, taxExemptReason: opts.taxExempt ? opts.taxExemptReason ?? null : null,
   }).returning();
   const lines = await tx.insert(invoiceLines).values(opts.lines.map((l, i) => ({
     invoiceId: inv.id, lineNo: i + 1, description: l.description, detail: l.detail ?? null,

@@ -1,14 +1,15 @@
 // Approvals list (ADR 0004): who approved what, newest first, keyset-paged on
 // id like the audit log. Admin only. Read-only — approvals are append-only.
-import { and, desc, eq, gte, lt, lte, or, type SQL } from 'drizzle-orm';
+import { and, desc, eq, lt, or, type SQL } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/sqlite-core';
 import { db } from '../../db/index.js';
 import { approvals, users } from '../../db/schema/index.js';
+import { dateRangeConds } from '../../lib/dates.js';
 
 export interface ApprovalQuery {
   action?: string; entity?: string; entityId?: string;
   userId?: number;           // requested OR approved by
-  from?: string; to?: string; // inclusive; a bare date `to` means end of that day
+  from?: string; to?: string; // inclusive; a bare date is the shop's local day
   before?: number; limit?: number;
 }
 
@@ -22,8 +23,7 @@ function where(q: ApprovalQuery): SQL | undefined {
   if (q.entity) conds.push(eq(A.entity, q.entity));
   if (q.entityId) conds.push(eq(A.entityId, q.entityId));
   if (q.userId != null) conds.push(or(eq(A.requestedBy, q.userId), eq(A.approvedBy, q.userId))!);
-  if (q.from) conds.push(gte(A.createdAt, q.from));
-  if (q.to) conds.push(lte(A.createdAt, q.to.length === 10 ? `${q.to}T99` : q.to));
+  conds.push(...dateRangeConds(A.createdAt, q.from, q.to));
   if (q.before != null) conds.push(lt(A.id, q.before));
   return conds.length ? and(...conds) : undefined;
 }

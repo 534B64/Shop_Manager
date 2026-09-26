@@ -1,10 +1,12 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { and, eq, desc, gte, isNull, lte } from 'drizzle-orm';
+import { and, eq, desc, isNull } from 'drizzle-orm';
+import { dateRange, dateRangeConds } from '../../lib/dates.js';
 import { db, withTx } from '../../db/index.js';
 import { payments, jobs, customers, customerCredits, drawerSessions } from '../../db/schema/index.js';
 import { parsePage, PagingError, type PageQuery } from '../../lib/paging.js';
 import { paymentPage, paymentColumns, balances } from './lists.js';
-import { recordPayment, paidNetCents, PaymentError } from './service.js';
+import { recordPayment, requireOpenDrawer, paidNetCents, PaymentError } from './service.js';
+import { posSettings } from '../settings/index.js';
 import { invoiceIfSettled, SalesError } from '../sales/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
 import { audit } from '../audit/index.js';
@@ -42,7 +44,8 @@ export async function paymentRoutes(app: FastifyInstance) {
 
   // kind 'payment' reduces what's owed; kind 'refund' is money handed back.
   // method 'credit' draws down / restores the customer's credit balance.
-  // Cash needs an open drawer (409); cash payments may send tenderedCents
+  // Every method needs an open drawer (409 drawer_closed, D12); refunds over
+  // the Settings threshold need a manager (D13). Cash payments may send tenderedCents
   // (change is recorded). A payment that settles the job issues its invoice
   // in the same transaction (Phase 3, ADR 0007) — returned as `invoice`.
   app.post('/api/payments', {
@@ -59,7 +62,7 @@ export async function paymentRoutes(app: FastifyInstance) {
           kind: { type: 'string', enum: ['payment', 'refund'] },
           note: { type: 'string', maxLength: 500 },
           tenderedCents: { type: 'integer', minimum: 0 },
-          approval: approvalSchema, // refunds only (ADR 0004)
+          approval: approvalSchema, // refunds over the threshold (D13)
         },
       },
     },
@@ -75,8 +78,12 @@ export async function paymentRoutes(app: FastifyInstance) {
         const [job] = await tx.select().from(jobs).where(eq(jobs.id, body.jobId));
         if (!job) return reply.code(400).send({ error: 'Unknown job' });
         if (body.method === 'credit' && !job.customerId) return reply.code(400).send({ error: 'Job has no customer — credit needs an account' });
-        // Money going back out needs a manager (after the idempotency return, so a
-        // wifi retry of an approved refund never asks twice or logs twice).
+        // Every payment/refund needs the open drawer (D12) — refused before a
+        // manager is asked to approve anything.
+        await requireOpenDrawer(tx);
+        // A refund over the Settings threshold needs a manager — the same rule
+        // as returns (D13). After the idempotency return, so a wifi retry of an
+        // approved refund never asks twice or logs twice.
         let approvalId: number | null = null;
         if (kind === 'refund') {
           // Never hand back more than the job has actually been paid.
@@ -84,10 +91,14 @@ export async function paymentRoutes(app: FastifyInstance) {
           if (body.amountCents > paid) {
             return reply.code(409).send({ error: `Refund is more than was paid on this job (${(paid / 100).toFixed(2)})` });
           }
-          const approver = await requireApproval(req, reply, { action: 'payment.refund', entity: 'job', entityId: job.id,
-            reason: body.note ?? null, details: { amountCents: body.amountCents, method: body.method, clientRef: body.clientRef } });
-          if (!approver) return reply;
-          approvalId = approver.approvalId;
+          const { refundApprovalThresholdCents } = await posSettings(tx);
+          if (body.amountCents > refundApprovalThresholdCents) {
+            const approver = await requireApproval(req, reply, { action: 'payment.refund', entity: 'job', entityId: job.id,
+              reason: body.note ?? null, details: { amountCents: body.amountCents, method: body.method, clientRef: body.clientRef,
+                thresholdCents: refundApprovalThresholdCents } });
+            if (!approver) return reply;
+            approvalId = approver.approvalId;
+          }
         }
         const row = await recordPayment(tx, req, { clientRef: body.clientRef, jobId: job.id, customerId: job.customerId,
           amountCents: body.amountCents, method: body.method, kind, note: body.note ?? null,
@@ -165,10 +176,9 @@ export async function paymentRoutes(app: FastifyInstance) {
   // Date-range summary: daily/weekly/monthly/custom reports come from here.
   app.get('/api/reports/summary', async (req) => {
     const { from, to } = req.query as { from?: string; to?: string };
-    // Range filter in SQL (Quick Order's "today" total and Reports call this on load).
+    // Range filter in SQL; yyyy-mm-dd = the shop's local day (Quick Order's "today" total and Reports call this on load).
     const rows = await db.select({ kind: payments.kind, method: payments.method, amountCents: payments.amountCents })
-      .from(payments).where(and(isNull(payments.voidedAt), from ? gte(payments.createdAt, from) : undefined,
-        to ? lte(payments.createdAt, to + 'T99') : undefined));
+      .from(payments).where(and(isNull(payments.voidedAt), ...dateRangeConds(payments.createdAt, from, to)));
     const byMethod: Record<string, number> = {};
     let paymentsCents = 0, refundsCents = 0, paymentCount = 0;
     for (const r of rows) {
@@ -182,7 +192,7 @@ export async function paymentRoutes(app: FastifyInstance) {
 
   app.get('/api/reports/payments.csv', async (req, reply) => {
     const { from, to } = req.query as { from?: string; to?: string };
-    let rows = await db
+    const rows = await db
       .select({
         id: payments.id, createdAt: payments.createdAt, amountCents: payments.amountCents,
         method: payments.method, kind: payments.kind, voidedAt: payments.voidedAt,
@@ -192,9 +202,8 @@ export async function paymentRoutes(app: FastifyInstance) {
       .from(payments)
       .leftJoin(jobs, eq(payments.jobId, jobs.id))
       .leftJoin(customers, eq(jobs.customerId, customers.id))
+      .where(dateRange(payments.createdAt, from, to))
       .orderBy(payments.createdAt);
-    if (from) rows = rows.filter((r) => r.createdAt >= from);
-    if (to) rows = rows.filter((r) => r.createdAt <= to + 'T99');
     const header = 'id,date,amount_dollars,kind,method,customer,job,job_type,voided,void_reason,note';
     const lines = rows.map((r) =>
       [r.id, r.createdAt, (r.amountCents / 100).toFixed(2), r.kind, r.method, csvEscape(r.customerName),

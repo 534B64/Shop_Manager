@@ -16,7 +16,7 @@ export class PaymentError extends Error {
   constructor(public status: 400 | 404 | 409, message: string, public code?: string) { super(message); }
 }
 
-export const NO_DRAWER_MESSAGE = 'No cash drawer is open — open the drawer (count the starting float) before taking or refunding cash.';
+export const NO_DRAWER_MESSAGE = 'No cash drawer is open — open the drawer (count the starting float) before taking or refunding any payment.';
 
 /** Store-credit balance for a customer (signed ledger sum). */
 export async function creditBalanceCents(customerId: number, dbx: Db = db): Promise<number> {
@@ -73,6 +73,14 @@ export async function openDrawer(dbx: Db = db, registerId = 1) {
   return row ?? null;
 }
 
+/** The open drawer, or a 409 `drawer_closed` refusal — every payment and
+ *  refund, whatever the method, needs one (owner decision D12). */
+export async function requireOpenDrawer(dbx: Db = db) {
+  const drawer = await openDrawer(dbx);
+  if (!drawer) throw new PaymentError(409, NO_DRAWER_MESSAGE, 'drawer_closed');
+  return drawer;
+}
+
 export interface RecordPaymentInput {
   clientRef?: string | null;
   jobId: number;
@@ -92,16 +100,16 @@ export interface RecordPaymentInput {
 /**
  * The one way a payment/refund row is written (POST /api/payments, counter
  * sales, invoice voids, returns). Inside the caller's transaction:
- * - cash needs an open drawer (409 otherwise); every row taken while a drawer
- *   is open is attached to it, so the Z-report sees card/check too;
+ * - every method (cash, card, check, credit, other) needs an open drawer (409
+ *   `drawer_closed` otherwise, D12) and the row is attached to it, so the
+ *   Z-report covers every payment;
  * - cash payments may record tendered + change (tendered ≥ amount);
  * - 'credit' draws the customer's store credit down (payment, 409 when short)
  *   or restores it (refund) through the credit ledger;
  * - one audit row.
  */
 export async function recordPayment(tx: Db, req: FastifyRequest, input: RecordPaymentInput) {
-  const drawer = await openDrawer(tx);
-  if (input.method === 'cash' && !drawer) throw new PaymentError(409, NO_DRAWER_MESSAGE, 'drawer_closed');
+  const drawer = await requireOpenDrawer(tx);
   let tenderedCents: number | null = null;
   let change: number | null = null;
   if (input.tenderedCents != null) {
@@ -130,7 +138,7 @@ export async function recordPayment(tx: Db, req: FastifyRequest, input: RecordPa
   const [row] = await tx.insert(payments).values({
     clientRef: input.clientRef ?? null, jobId: input.jobId, amountCents: input.amountCents,
     method: input.method, kind: input.kind, note: input.note ?? null, createdBy: req.user!.name,
-    drawerSessionId: drawer?.id ?? null, tenderedCents, changeCents: change,
+    drawerSessionId: drawer.id, tenderedCents, changeCents: change,
     returnId: input.returnId ?? null, invoiceVoidId: input.invoiceVoidId ?? null,
   }).returning();
   await audit(tx, req, { action: input.kind === 'refund' ? 'payment.refund' : 'payment.create', entity: 'payment',

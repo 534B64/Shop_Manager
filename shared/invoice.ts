@@ -65,6 +65,34 @@ export function priceInvoice(lines: LineInput[], taxRatePct: number, discountPct
   return { lines: priced, subtotalCents, taxCents, discountPct: pct, discountCents, totalCents: subtotalCents + taxCents - discountCents };
 }
 
+// ---- Counter sale tax (owner decision D10, 2026-09-26) ----
+
+/** Reasons offered for a tax-exempt counter sale (any short reason is accepted). */
+export const TAX_EXEMPT_REASONS = ['Resale certificate', 'Nonprofit', 'Government', 'Out of state'] as const;
+export const TAX_EXEMPT_REASON_MIN = 3;
+export const TAX_EXEMPT_REASON_MAX = 120;
+
+/** A usable exemption reason (trimmed), or null when it's missing / too short. */
+export function taxExemptReason(s: string | null | undefined): string | null {
+  const r = (s ?? '').trim();
+  return r.length >= TAX_EXEMPT_REASON_MIN && r.length <= TAX_EXEMPT_REASON_MAX ? r : null;
+}
+
+export interface CounterLineInput { qty: number; subtotalCents: number; taxable?: boolean }
+
+/**
+ * Price a counter sale the way POST /api/pos/sale does: every line is taxed
+ * unless it says `taxable: false` (the sale-level `taxable` sets the default),
+ * and a tax-exempt sale taxes nothing. No discount at the counter. The /pos and
+ * Quick Order previews call this too, so the screen equals the invoice.
+ */
+export function priceCounterSale(lines: CounterLineInput[], taxRatePct: number,
+  opts: { taxExempt?: boolean; defaultTaxable?: boolean } = {}): PricedInvoice {
+  const dflt = opts.defaultTaxable ?? true;
+  return priceInvoice(lines.map((l) => ({ qty: l.qty, subtotalCents: l.subtotalCents,
+    taxable: !opts.taxExempt && (l.taxable ?? dflt) })), taxRatePct, 0);
+}
+
 /**
  * Tax + discount that reproduce a total already charged (pre-Phase-3 jobs
  * whose stored total was computed at a tax rate that has since changed).

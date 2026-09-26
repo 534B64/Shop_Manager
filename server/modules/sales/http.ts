@@ -18,4 +18,3 @@ export async function refusable<T>(reply: FastifyReply, fn: () => Promise<T>) {
 }
 
 export const pageLimit = (v?: string) => Math.min(Math.max(Number(v) || 50, 1), 200);
-export const endOfDay = (to: string) => (to.length === 10 ? `${to}T99` : to);

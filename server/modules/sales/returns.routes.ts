@@ -1,15 +1,16 @@
 // Returns / RMAs (ADR 0007).
 import type { FastifyInstance } from 'fastify';
-import { and, asc, desc, eq, gte, inArray, lt, lte, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, lt, type SQL } from 'drizzle-orm';
 import { db, withTx } from '../../db/index.js';
 import { jobs, payments, invoices, invoiceLines, invoiceVoids, salesReturns, salesReturnLines } from '../../db/schema/index.js';
 import { audit } from '../audit/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
 import { posSettings } from '../settings/index.js';
 import { recordReturn } from '../inventory/index.js';
-import { recordPayment, paidNetCents, returnedCents, openDrawer } from '../payments/index.js';
+import { recordPayment, paidNetCents, returnedCents, openDrawer, requireOpenDrawer } from '../payments/index.js';
 import { SalesError } from './service.js';
-import { refusable, pageLimit, endOfDay } from './http.js';
+import { refusable, pageLimit } from './http.js';
+import { dateRangeConds } from '../../lib/dates.js';
 import { returnLineRefund, refundDueCents, TENDER_METHODS } from '../../../shared/invoice.js';
 
 export async function returnRoutes(app: FastifyInstance) {
@@ -65,6 +66,8 @@ export async function returnRoutes(app: FastifyInstance) {
       const refundCents = refundDueCents({ returnCents: totalCents, invoiceTotalCents: inv.totalCents,
         returnedBeforeCents: await returnedCents(inv.jobId, tx), paidNetCents: await paidNetCents(inv.jobId, tx) });
       if (refundCents > 0 && !body.refundMethod) throw new SalesError(400, 'Pick how the refund goes back (refundMethod)');
+      // Money handed back needs the open drawer (D12) — before asking a manager.
+      if (refundCents > 0) await requireOpenDrawer(tx);
 
       // Over the Settings threshold → manager approval; at or under → cashier alone.
       const { refundApprovalThresholdCents } = await posSettings(tx);
@@ -112,8 +115,7 @@ export async function returnRoutes(app: FastifyInstance) {
     const limit = pageLimit(q.limit);
     const conds: SQL[] = [];
     if (q.invoiceId) conds.push(eq(salesReturns.invoiceId, Number(q.invoiceId)));
-    if (q.from) conds.push(gte(salesReturns.createdAt, q.from));
-    if (q.to) conds.push(lte(salesReturns.createdAt, endOfDay(q.to)));
+    conds.push(...dateRangeConds(salesReturns.createdAt, q.from, q.to));
     if (q.before) conds.push(lt(salesReturns.id, Number(q.before)));
     const rows = await db.select({ ret: salesReturns, invoiceNumber: invoices.number }).from(salesReturns)
       .innerJoin(invoices, eq(salesReturns.invoiceId, invoices.id))

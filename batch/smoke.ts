@@ -1,7 +1,8 @@
 // Runtime smoke test. Boots the REAL API (server/app.ts) on a throwaway SQLite
 // file, runs migrations, listens on a test port, and exercises the key flows
 // over real HTTP — health, first-run setup + sessions (ADR 0004), the Phase 8
-// stock check, the cash drawer rule, and job balance + invoicing. Prints PASS/FAIL per check and exits non-zero on any failure.
+// stock check, the drawer rule (every payment needs an open drawer), job balance +
+// invoicing, and a counter sale taxed by default. Prints PASS/FAIL per check and exits non-zero on any failure.
 // Run via: npx tsx batch/smoke.ts   (invoked by 7-Runtime-Test.bat)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -86,9 +87,11 @@ try {
   const owed = bals.find((b: any) => b.jobId === job.id)?.owedCents;
   check('GET /api/balances → owes 10000', owed === 10000);
 
-  // Cash needs an open drawer (Phase 3, ADR 0007).
+  // Every payment — cash, card, check — needs an open drawer (ADR 0007, D12).
   const noDrawer = await post('/api/payments', { clientRef: `${clientRef}-early`, jobId: job.id, amountCents: 100, method: 'cash' });
   check('cash with no drawer open → 409', noDrawer.status === 409);
+  const noDrawerCard = await post('/api/payments', { clientRef: `${clientRef}-early-card`, jobId: job.id, amountCents: 100, method: 'card' });
+  check('card with no drawer open → 409 drawer_closed', noDrawerCard.status === 409 && (await json(noDrawerCard)).code === 'drawer_closed');
   const drawer = await post('/api/drawer/open', { openingFloatCents: 10000 });
   check('POST /api/drawer/open → 201', drawer.status === 201);
   const payRes = await post('/api/payments', { clientRef: `${clientRef}-pay`, jobId: job.id, amountCents: 10000, method: 'cash' });
@@ -96,6 +99,14 @@ try {
   check('full cash payment → 201 + invoice 000001', payRes.status === 201 && pay.invoice?.numberDisplay === '000001', JSON.stringify(pay));
   const bals2 = await getJ('/api/balances');
   check('after full payment → drops off the owed list', !bals2.some((b: any) => b.jobId === job.id));
+
+  // Counter sale: the amount rung up is pre-tax; tax is added (D10).
+  const tax = await getJ('/api/settings/tax');
+  const saleRes = await post('/api/pos/sale', { clientRef: `${clientRef}-sale`, title: 'Smoke counter sale', amountCents: 1000, method: 'card' });
+  const sale = await json(saleRes);
+  const wantTax = Math.round(1000 * tax.ratePct / 100);
+  check('counter sale → 201, taxed by default', saleRes.status === 201 && sale.invoice?.taxCents === wantTax
+    && sale.payment?.amountCents === 1000 + wantTax, JSON.stringify(sale.invoice));
 } catch (err) {
   fail++;
   console.log(`\n  ERROR during smoke test: ${err instanceof Error ? err.message : String(err)}`);

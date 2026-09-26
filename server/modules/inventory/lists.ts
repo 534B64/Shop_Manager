@@ -1,12 +1,13 @@
 // Inventory list reads with filtering / sorting / grouping / paging in SQL (UI
 // foundation, ADR 0009) — the old Inventory page's client-side filters, search
 // modes, group-by and sorts, one-for-one.
-import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, inArray, isNotNull, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { categories, inventoryAdjustments, inventoryItems, locations, materials, suppliers } from '../../db/schema/index.js';
 import { TXN_TYPES } from '../../../shared/domain.js';
 import { daysUntilStockout, urgencyCompare } from '../../../shared/reorder.js';
 import { likePattern, parseDir, parseSort, type Page, type PageQuery } from '../../lib/paging.js';
+import { dateRangeConds } from '../../lib/dates.js';
 
 type Q = Record<string, unknown>;
 const I = inventoryItems;
@@ -221,7 +222,7 @@ const day = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test
 /**
  * GET /api/inventory/transactions — the ledger across items, newest first,
  * keyset-paged on id (?before=<id>&limit=<n ≤ 200>, default 50). Filters:
- * type (txn type), itemId, from / to (yyyy-mm-dd, inclusive, UTC dates).
+ * type (txn type), itemId, from / to (yyyy-mm-dd, inclusive, the shop's local days).
  */
 export async function transactionPage(q: Q) {
   const limit = Math.min(Math.max(int(q.limit) ?? 50, 1), 200);
@@ -232,9 +233,7 @@ export async function transactionPage(q: Q) {
   if (type && (TXN_TYPES as readonly string[]).includes(type)) conds.push(eq(A.txnType, type));
   const item = int(q.itemId);
   if (item != null) conds.push(eq(A.itemId, item));
-  const from = day(q.from), to = day(q.to);
-  if (from) conds.push(gte(A.createdAt, from));
-  if (to) conds.push(sql`${A.createdAt} < date(${to}, '+1 day')`);
+  conds.push(...dateRangeConds(A.createdAt, day(q.from), day(q.to)));
   const rows = await db.select({
     id: A.id, itemId: A.itemId, itemName: I.name, delta: A.delta, txnType: A.txnType, reason: A.reason,
     note: A.note, createdBy: A.createdBy, createdAt: A.createdAt, locationId: A.locationId,

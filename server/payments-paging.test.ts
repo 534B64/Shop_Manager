@@ -33,6 +33,8 @@ beforeAll(async () => {
   await app.ready();
   const { createUserWithToken } = await import('./test-helpers.js');
   admin = await createUserWithToken(app, 'admin');
+  // Every payment needs an open drawer (D12).
+  await app.inject({ method: 'POST', url: '/api/drawer/open', headers: admin.headers, payload: { openingFloatCents: 0 } });
   const a = await job('Alpha banner', 10000);
   const b = await job('Bravo decal', 5000);
   const c = await job('Charlie 100% sign', 2000);

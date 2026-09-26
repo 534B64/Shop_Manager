@@ -66,8 +66,10 @@ async function nextInvoiceNumber() {
   const rows = await dbm.db.all<{ n: number }>(orm.sql`select next_value as n from number_sequences where name = 'invoice'`);
   return Number(rows[0].n);
 }
+// Untaxed unless a test says otherwise (keeps these money figures round; the
+// taxed-by-default rule, D10, is covered in owner-decisions.test.ts).
 const sale = (payload: Record<string, unknown>, u: TestUser = admin) =>
-  as(u)({ method: 'POST', url: '/api/pos/sale', payload: { clientRef: ref(), title: `Sale ${uniq()}`, amountCents: 1000, method: 'card', ...payload } });
+  as(u)({ method: 'POST', url: '/api/pos/sale', payload: { clientRef: ref(), title: `Sale ${uniq()}`, amountCents: 1000, method: 'card', taxable: false, ...payload } });
 const detail = async (number: number) =>
   (await inject({ method: 'GET', url: `/api/invoices/${String(number).padStart(6, '0')}` })).json() as InvoiceDetail;
 
@@ -80,15 +82,14 @@ async function makeJob(over: Record<string, unknown> = {}, u: TestUser = admin) 
 }
 
 describe('cash drawer rules (no drawer open yet)', () => {
-  it('refuses a cash payment with no open drawer (409), card/check need no drawer', async () => {
+  it('refuses a payment of any method with no open drawer (409 drawer_closed, D12)', async () => {
     const job = await makeJob();
-    const cash = await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 1000, method: 'cash' } });
-    expect(cash.statusCode).toBe(409);
-    expect(cash.json()).toMatchObject({ code: 'drawer_closed' });
-    expect(cash.json().error).toMatch(/No cash drawer is open/);
-    const card = await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 1000, method: 'card' } });
-    expect(card.statusCode).toBe(201);
-    expect(card.json().drawerSessionId).toBeNull();
+    for (const method of ['cash', 'card', 'check', 'other']) {
+      const res = await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 1000, method } });
+      expect(res.statusCode).toBe(409);
+      expect(res.json()).toMatchObject({ code: 'drawer_closed' });
+      expect(res.json().error).toMatch(/No cash drawer is open/);
+    }
   });
 
   it('a cash counter sale with no drawer rolls back entirely and gives its invoice number back', async () => {
@@ -194,9 +195,10 @@ describe('per-line tax', () => {
     expect(res.json().payment.amountCents).toBe(inv.totalCents);
   });
 
-  it('a legacy counter sale (no taxable flag) charges exactly the amount rung up', async () => {
-    const res = (await sale({ amountCents: 2500 })).json();
-    expect(res.invoice).toMatchObject({ totalCents: 2500, taxCents: 0 });
+  it('a legacy counter sale (no taxable flag) adds tax on top of the amount rung up (D10)', async () => {
+    const res = (await inject({ method: 'POST', url: '/api/pos/sale', payload: { clientRef: ref(), title: 'Legacy', amountCents: 2500, method: 'card' } })).json();
+    expect(res.invoice).toMatchObject({ subtotalCents: 2500, taxCents: 206, totalCents: 2706, taxExempt: false });
+    expect(res.payment.amountCents).toBe(2706);
   });
 
   it('paying a job in full issues its invoice, matching the job total incl. tax + discount', async () => {
@@ -284,11 +286,12 @@ describe('invoice void', () => {
     expect(ret.statusCode).toBe(409);
   });
 
-  it('keepJob unlocks the job for editing and re-invoicing under a new number', async () => {
+  it('a job invoice void keeps the job open by default, unlocked for editing and re-invoicing under a new number', async () => {
     const job = await makeJob({ finalPriceCents: 2000 });
     const pay = (await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 2000, method: 'card' } })).json();
-    const v = await inject({ method: 'POST', url: `/api/invoices/${pay.invoice.id}/void`, payload: { reason: 'wrong price', keepJob: true } });
+    const v = await inject({ method: 'POST', url: `/api/invoices/${pay.invoice.id}/void`, payload: { reason: 'wrong price' } });
     expect(v.statusCode).toBe(201);
+    expect(v.json().void.jobArchived).toBe(false);
     expect(v.json().refunds[0]).toMatchObject({ method: 'card', amountCents: 2000 });
     const edit = await inject({ method: 'PUT', url: `/api/jobs/${job.id}`, payload: { finalPriceCents: 1800 } });
     expect(edit.statusCode).toBe(200);

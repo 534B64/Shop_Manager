@@ -3,24 +3,18 @@
 // voids made in the range cancelled (net of earlier returns), minus returns
 // made in the range — each counted on the day it happened.
 import type { FastifyInstance } from 'fastify';
-import { and, eq, gte, lte, sql, type SQL } from 'drizzle-orm';
+import { eq, sql, type SQL } from 'drizzle-orm';
 import type { SQLiteColumn } from 'drizzle-orm/sqlite-core';
 import { db } from '../../db/index.js';
+import { dateRange, DAY_RE } from '../../lib/dates.js';
 import { invoices, invoiceVoids, salesReturns } from '../../db/schema/index.js';
 import { requireRole } from '../auth/index.js';
 import { formatInvoiceNumber, netSales } from '../../../shared/invoice.js';
 
-const DAY = /^\d{4}-\d{2}-\d{2}$/;
 const sum = (c: SQL | SQLiteColumn) => sql<number>`coalesce(sum(${c}), 0)`;
+const range = dateRange; // yyyy-mm-dd = the shop's local day (server/lib/dates.ts)
 
-function range(col: SQLiteColumn, from: string | null, to: string | null): SQL | undefined {
-  const conds: SQL[] = [];
-  if (from) conds.push(gte(col, from));
-  if (to) conds.push(lte(col, `${to}T99`));
-  return conds.length ? and(...conds) : undefined;
-}
-
-/** Totals for invoices / voids / returns created between from and to (yyyy-mm-dd, inclusive). */
+/** Totals for invoices / voids / returns created between from and to (local yyyy-mm-dd days, inclusive). */
 export async function salesReport(from: string | null, to: string | null) {
   const [inv] = await db.select({
     count: sql<number>`count(*)`, first: sql<number | null>`min(${invoices.number})`, last: sql<number | null>`max(${invoices.number})`,
@@ -58,7 +52,7 @@ export async function salesReportRoutes(app: FastifyInstance) {
     if (!requireRole(req, reply, 'manager')) return reply;
     const q = req.query as { from?: string; to?: string };
     for (const v of [q.from, q.to]) {
-      if (v && !DAY.test(v)) return reply.code(400).send({ error: 'Dates must be YYYY-MM-DD' });
+      if (v && !DAY_RE.test(v)) return reply.code(400).send({ error: 'Dates must be YYYY-MM-DD' });
     }
     return salesReport(q.from || null, q.to || null);
   });

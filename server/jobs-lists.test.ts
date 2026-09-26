@@ -39,6 +39,8 @@ beforeAll(async () => {
   await app.ready();
   const { createUserWithToken } = await import('./test-helpers.js');
   admin = await createUserWithToken(app, 'admin');
+  // Every payment needs an open drawer (D12).
+  await app.inject({ method: 'POST', url: '/api/drawer/open', headers: admin.headers, payload: { openingFloatCents: 0 } });
 
   await makeJob('Overdue banner', { dueDate: '2030-03-08', finalPriceCents: 5000 });
   await makeJob('Today magnet', { dueDate: TODAY, finalPriceCents: 2000 });

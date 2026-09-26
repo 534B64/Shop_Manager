@@ -2,9 +2,10 @@
 // the caller's transaction handle so the change and its audit row commit (or
 // roll back) together.
 import type { FastifyRequest } from 'fastify';
-import { and, desc, eq, gte, lt, lte, type SQL } from 'drizzle-orm';
+import { and, desc, eq, lt, type SQL } from 'drizzle-orm';
 import { db, type Db } from '../../db/index.js';
 import { auditLog } from '../../db/schema/index.js';
+import { dateRangeConds } from '../../lib/dates.js';
 
 export interface AuditEntry {
   action: string;          // e.g. 'customer.archive'
@@ -43,9 +44,8 @@ function where(q: AuditQuery): SQL | undefined {
   if (q.entity) conds.push(eq(auditLog.entity, q.entity));
   if (q.entityId) conds.push(eq(auditLog.entityId, q.entityId));
   if (q.userId != null) conds.push(eq(auditLog.userId, q.userId));
-  if (q.from) conds.push(gte(auditLog.at, q.from));
-  // A bare date means "through the end of that day".
-  if (q.to) conds.push(lte(auditLog.at, q.to.length === 10 ? `${q.to}T99` : q.to));
+  // A bare date is the shop's local day (server/lib/dates.ts).
+  conds.push(...dateRangeConds(auditLog.at, q.from, q.to));
   if (q.before != null) conds.push(lt(auditLog.id, q.before));
   return conds.length ? and(...conds) : undefined;
 }
