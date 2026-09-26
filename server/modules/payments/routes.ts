@@ -260,7 +260,7 @@ export async function paymentRoutes(app: FastifyInstance) {
       // accuracy. A DB error here rolls the whole sale back (client retries).
       if (body.inventoryItemId != null) {
         const sale = await recordSale({ itemId: body.inventoryItemId, qty: body.stockQty ?? 1,
-          title: body.title, jobId: job.id, createdBy: req.user!.name }, tx);
+          title: body.title, jobId: job.id, createdBy: req.user!.name, userId: req.user!.id }, tx);
         if (sale.adjustmentId != null) {
           await audit(tx, req, { action: 'inventory.sold', entity: 'inventory_item', entityId: body.inventoryItemId,
             before: { count: sale.countBefore }, after: { count: (sale.countBefore ?? 0) - sale.applied,

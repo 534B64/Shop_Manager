@@ -16,6 +16,7 @@ const ACTION_LABELS: Record<string, string> = {
   'customer.unarchive': 'Restore an archived customer',
   'customer.credit_adjust': 'Adjust store credit',
   'inventory.adjust': 'Change a stock count',
+  'cycle_count.post': 'Approve & post a cycle count',
 };
 
 interface Pending { action: string; error?: string; resolve: (a: Approval | null) => void }

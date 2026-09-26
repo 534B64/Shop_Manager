@@ -1,25 +1,29 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, desc, isNull, and, isNotNull, asc } from 'drizzle-orm';
+import { eq, desc, isNull, and, isNotNull, asc, lt } from 'drizzle-orm';
 import { db, withTx, type Db } from '../../db/index.js';
-import { inventoryItems, inventoryAdjustments, cycleCounts, cycleCountLines, materials, materialColors, suppliers, categories } from '../../db/schema/index.js';
+import { inventoryItems, inventoryAdjustments, inventoryBalances, locations, cycleCountLines, materials, materialColors, suppliers, categories } from '../../db/schema/index.js';
 import { availabilityCheck, acrossFromDims, type StockLineQuery, type StockResult } from '../../../shared/stockCheck.js';
-import { ADJUST_REASONS, VARIANCE_REASON_CODES } from '../../../shared/domain.js';
+import { ADJUST_REASONS, type AdjustReason } from '../../../shared/domain.js';
 import { varianceFor, hasRepeatedVariance } from '../../../shared/countReview.js';
 import { urgencyCompare, daysUntilStockout } from '../../../shared/reorder.js';
-import { inventorySettings, recomputeAvgDailyUse } from './service.js';
-import { requireApproval, approvalSchema } from '../auth/index.js';
+import { countUnitCost, extendedValueCents } from '../../../shared/costing.js';
+import {
+  inventorySettings, postTransaction, receive, adjust, transfer, reconcile, postedLine,
+} from './service.js';
+import { ledgerWrite, txnUser } from './http.js';
+import { requireApproval, requireRole, approvalSchema } from '../auth/index.js';
 import { audit } from '../audit/index.js';
-
-/** Cost per COUNT unit — lastCostCents is per PURCHASE unit; the conversion
- *  factor bridges them. Null when the item has no recorded cost. */
-function costPerCountUnit(item: { lastCostCents: number | null; purchaseToCountFactor: number }): number | null {
-  if (item.lastCostCents == null) return null;
-  const f = item.purchaseToCountFactor > 0 ? item.purchaseToCountFactor : 1;
-  return Math.round(item.lastCostCents / f);
-}
 
 const isUniqueViolation = (e: unknown): boolean =>
   e instanceof Error && /unique/i.test(e.message);
+
+const COUNT_IS_LEDGER = 'On-hand can\'t be edited directly — every quantity change is an inventory transaction. Use Receive stock, an adjustment (POST /api/inventory/:id/adjust), a transfer, or the cycle count.';
+
+/** Average cost for a brand-new item: its last cost (per purchase unit)
+ *  converted to count units, else 0 (unknown until the first costed receipt). */
+function initialAvgCost(lastCostCents: number | null | undefined, factor: number | null | undefined): number {
+  return lastCostCents != null ? Math.round(countUnitCost(lastCostCents, factor)) : 0;
+}
 
 /** A SKU's color must be one of the material's admin-defined (non-archived)
  *  colors — a typo would otherwise create an orphan color the stock-check
@@ -87,12 +91,23 @@ export async function inventoryRoutes(app: FastifyInstance) {
         reorderMaxQty: { type: 'integer', minimum: 0 },
       } } },
   }, async (req, reply) => {
-    return withTx(async (tx) => {
-      const [row] = await tx.insert(inventoryItems).values(req.body as { name: string }).returning();
-      await audit(tx, req, { action: 'inventory_item.create', entity: 'inventory_item', entityId: row.id, after: row });
+    // A starting count is not written to the item — the item is created at 0
+    // and the count arrives as an 'opening' transaction (ADR 0006).
+    const { count, ...fields } = req.body as { name: string; count?: number; lastCostCents?: number; purchaseToCountFactor?: number };
+    return ledgerWrite(reply, () => withTx(async (tx) => {
+      let [row] = await tx.insert(inventoryItems).values({
+        ...fields, avgCostCents: initialAvgCost(fields.lastCostCents, fields.purchaseToCountFactor),
+      }).returning();
+      let opening = null;
+      if (count) {
+        const r = await postTransaction({ itemId: row.id, type: 'opening', qty: count,
+          reason: 'opening balance', source: { type: 'manual' }, user: txnUser(req) }, tx);
+        row = r.item; opening = r.txn;
+      }
+      await audit(tx, req, { action: 'inventory_item.create', entity: 'inventory_item', entityId: row.id, after: { ...row, opening } });
       reply.code(201);
       return row;
-    });
+    }));
   });
 
   app.put('/api/inventory/:id', {
@@ -113,10 +128,13 @@ export async function inventoryRoutes(app: FastifyInstance) {
         countUnit: { type: ['string', 'null'], maxLength: 24 },
         purchaseToCountFactor: { type: 'number', exclusiveMinimum: 0 },
         reorderMaxQty: { type: ['integer', 'null'], minimum: 0 },
+        // Listed only so it isn't silently stripped — it is always refused.
+        count: {},
       } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const b = req.body as { color?: string | null; active?: boolean };
+    const b = req.body as { color?: string | null; active?: boolean; count?: unknown; lastCostCents?: number };
+    if ('count' in b) return reply.code(400).send({ error: COUNT_IS_LEDGER });
     try {
       return await withTx(async (tx) => {
         const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
@@ -128,7 +146,14 @@ export async function inventoryRoutes(app: FastifyInstance) {
           const colorError = await validateSkuColor(item.materialId as number, b.color.trim(), tx);
           if (colorError) return reply.code(400).send({ error: colorError });
         }
-        const [row] = await tx.update(inventoryItems).set(req.body as object).where(eq(inventoryItems.id, id)).returning();
+        const patch: Record<string, unknown> = { ...b };
+        // An item that has never had a costed receipt has no average yet —
+        // seed it from a last cost entered by hand (same rule as migration 0015).
+        if (item.avgCostCents === 0 && b.lastCostCents != null) {
+          const f = (b as { purchaseToCountFactor?: number }).purchaseToCountFactor ?? item.purchaseToCountFactor;
+          patch.avgCostCents = initialAvgCost(b.lastCostCents, f);
+        }
+        const [row] = await tx.update(inventoryItems).set(patch).where(eq(inventoryItems.id, id)).returning();
         await audit(tx, req, { action: 'inventory_item.update', entity: 'inventory_item', entityId: id, before: item, after: row });
         return row;
       });
@@ -140,12 +165,14 @@ export async function inventoryRoutes(app: FastifyInstance) {
     }
   });
 
-  // All count changes go through adjustments — the log explains every number.
-  // Receiving = reason 'received' with a delta in COUNT units (the client's
-  // receiving form converts purchase units × factor); unitCostCents is the
-  // cost paid per PURCHASE unit and is kept on the row — that per-receipt
-  // history is what the cost-trend view reads. supplierId records who the
-  // stock actually came from (may differ from the item's preferred supplier).
+  // All count changes go through the ledger (ADR 0006) — this route is the
+  // manual entry point. Receiving = reason 'received' with a delta in COUNT
+  // units (the client's receiving form converts purchase units × factor);
+  // unitCostCents is the cost paid per PURCHASE unit and is kept on the row —
+  // that per-receipt history is what the cost-trend view reads — and moves the
+  // moving-average cost. supplierId records who the stock actually came from.
+  // Every other reason books as an adjustment / production / sale transaction
+  // (see txnTypeForReason) and needs a manager.
   app.post('/api/inventory/:id/adjust', {
     schema: { body: { type: 'object', required: ['delta', 'reason'], additionalProperties: false,
       properties: {
@@ -154,23 +181,24 @@ export async function inventoryRoutes(app: FastifyInstance) {
         note: { type: 'string', maxLength: 300 },
         unitCostCents: { type: 'integer', minimum: 0 },
         supplierId: { type: 'integer' },
+        locationId: { type: 'integer' },
         approval: approvalSchema,
       } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const { delta, reason, note, unitCostCents, supplierId } = req.body as { delta: number; reason: string; note?: string; unitCostCents?: number; supplierId?: number };
-    // One transaction: the ledger row, the new count/cost, and the audit row.
-    // The below-zero check reads the count through the same transaction.
-    return withTx(async (tx) => {
+    const { delta, reason, note, unitCostCents, supplierId, locationId } = req.body as {
+      delta: number; reason: AdjustReason; note?: string; unitCostCents?: number; supplierId?: number; locationId?: number;
+    };
+    // One transaction: the approval, the ledger row (its trigger moves the
+    // count), the cost update, and the audit row.
+    return ledgerWrite(reply, () => withTx(async (tx) => {
       const [item] = await tx.select().from(inventoryItems).where(eq(inventoryItems.id, id));
       if (!item) return reply.code(404).send({ error: 'Item not found' });
-      const next = item.count + delta;
-      if (next < 0) return reply.code(409).send({ error: `Count cannot go below zero (have ${item.count})` });
+      if (item.count + delta < 0) return reply.code(409).send({ error: `Count cannot go below zero (have ${item.count})` });
       const isReceipt = reason === 'received';
       // Receiving is day-to-day work; every other manual count change is an
       // override of the books and needs a manager (ADR 0004). The weekly cycle
-      // count stays open to everyone — it is the reconciler, with its own
-      // reason-code gate on big variances.
+      // count has its own approval step at posting.
       let approvalId: number | null = null;
       if (!isReceipt) {
         const approver = await requireApproval(req, reply, { action: 'inventory.adjust', entity: 'inventory_item', entityId: id,
@@ -178,157 +206,71 @@ export async function inventoryRoutes(app: FastifyInstance) {
         if (!approver) return reply;
         approvalId = approver.approvalId;
       }
-      const [adj] = await tx.insert(inventoryAdjustments).values({
-        itemId: id, delta, reason, note: note ?? null, createdBy: req.user!.name,
-        unitCostCents: isReceipt ? unitCostCents ?? null : null,
-        supplierId: isReceipt ? supplierId ?? null : null,
-      }).returning();
-      const patch: Record<string, unknown> = { count: next };
-      // Receiving with a cost updates "last cost paid" — the latest point of the
-      // per-receipt history stored above.
-      if (isReceipt && unitCostCents != null) patch.lastCostCents = unitCostCents;
-      const [row] = await tx.update(inventoryItems).set(patch).where(eq(inventoryItems.id, id)).returning();
+      const base = { itemId: id, qty: delta, note: note ?? null, locationId, user: txnUser(req) };
+      const r = isReceipt
+        ? await receive({ ...base, purchaseUnitCostCents: unitCostCents ?? null, supplierId: supplierId ?? null }, tx)
+        : await adjust({ ...base, reason }, tx);
       await audit(tx, req, { action: isReceipt ? 'inventory.receive' : 'inventory.adjust', entity: 'inventory_item',
-        entityId: id, before: { count: item.count, lastCostCents: item.lastCostCents },
-        after: { count: row.count, lastCostCents: row.lastCostCents, adjustment: adj }, approvalId });
-      return row;
-    });
+        entityId: id, before: { count: r.before.count, lastCostCents: r.before.lastCostCents, avgCostCents: r.before.avgCostCents },
+        after: { count: r.item.count, lastCostCents: r.item.lastCostCents, avgCostCents: r.item.avgCostCents, transaction: r.txn }, approvalId });
+      return r.item;
+    }));
+  });
+
+  // Move stock between locations (manager+). Item total is unchanged.
+  app.post('/api/inventory/:id/transfer', {
+    schema: { body: { type: 'object', required: ['fromLocationId', 'toLocationId', 'qty'], additionalProperties: false,
+      properties: {
+        fromLocationId: { type: 'integer' },
+        toLocationId: { type: 'integer' },
+        qty: { type: 'integer', minimum: 1 },
+        note: { type: 'string', maxLength: 300 },
+      } } },
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
+    const id = Number((req.params as { id: string }).id);
+    const b = req.body as { fromLocationId: number; toLocationId: number; qty: number; note?: string };
+    return ledgerWrite(reply, () => withTx(async (tx) => {
+      const r = await transfer({ itemId: id, ...b, user: txnUser(req) }, tx);
+      await audit(tx, req, { action: 'inventory.transfer', entity: 'inventory_item', entityId: id,
+        after: { transferId: r.transferId, from: b.fromLocationId, to: b.toLocationId, qty: b.qty, out: r.out.id, in: r.in.id } });
+      return { transferId: r.transferId, item: r.item, transactions: [r.out, r.in] };
+    }));
+  });
+
+  // An item's inventory transactions, newest first, keyset-paginated on id
+  // (?before=<id>&limit=<n ≤ 200>).
+  app.get('/api/inventory/:id/transactions', async (req) => {
+    const id = Number((req.params as { id: string }).id);
+    const q = req.query as { before?: string; limit?: string };
+    const limit = Math.min(Math.max(Number(q.limit) || 50, 1), 200);
+    const before = q.before != null && q.before !== '' ? Number(q.before) : null;
+    const rows = await db.select().from(inventoryAdjustments)
+      .where(and(eq(inventoryAdjustments.itemId, id), before != null ? lt(inventoryAdjustments.id, before) : undefined))
+      .orderBy(desc(inventoryAdjustments.id)).limit(limit);
+    return { rows, nextBefore: rows.length === limit ? rows[rows.length - 1].id : null };
+  });
+
+  // On-hand per location for one item.
+  app.get('/api/inventory/:id/balances', async (req) => {
+    const id = Number((req.params as { id: string }).id);
+    return db.select({ locationId: inventoryBalances.locationId, locationName: locations.name, onHand: inventoryBalances.onHand })
+      .from(inventoryBalances).innerJoin(locations, eq(inventoryBalances.locationId, locations.id))
+      .where(eq(inventoryBalances.itemId, id)).orderBy(locations.id);
+  });
+
+  // Integrity check: items / balances whose cached on-hand disagrees with the
+  // ledger. The triggers make this impossible, so it should always be empty.
+  app.get('/api/inventory/reconcile', async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
+    return reconcile();
   });
 
   app.get('/api/inventory/:id/history', async (req) => {
     const id = Number((req.params as { id: string }).id);
     return db.select().from(inventoryAdjustments)
       .where(eq(inventoryAdjustments.itemId, id))
-      .orderBy(desc(inventoryAdjustments.createdAt)).limit(50);
-  });
-
-  // ---- Cycle counts: schedule one, complete it with counted values ----
-  app.get('/api/cycle-counts/next', async () => {
-    const [pending] = await db.select().from(cycleCounts)
-      .where(isNull(cycleCounts.completedAt)).orderBy(cycleCounts.scheduledFor).limit(1);
-    return pending ?? null;
-  });
-
-  app.post('/api/cycle-counts', {
-    schema: { body: { type: 'object', required: ['scheduledFor'], additionalProperties: false,
-      properties: { scheduledFor: { type: 'string', minLength: 10, maxLength: 10 } } } },
-  }, async (req, reply) => {
-    return withTx(async (tx) => {
-      const [row] = await tx.insert(cycleCounts).values(req.body as { scheduledFor: string }).returning();
-      await audit(tx, req, { action: 'cycle_count.create', entity: 'cycle_count', entityId: row.id, after: row });
-      reply.code(201);
-      return row;
-    });
-  });
-
-  // Complete (v2, 2026-07-07 — blind count + variance review). The counted
-  // values were entered blind (no system count shown); this endpoint is the
-  // reconciliation. Every counted item gets an immutable cycle_count_lines
-  // snapshot; any variance ABOVE the configured threshold must carry a reason
-  // code (server-enforced with the same shared math the review screen uses) and
-  // books under that reason; small drift books as plain 'cycle_count'. On-hand
-  // resets to the counted value, the session locks (one-shot, 409 after), and
-  // each item's rolling avg daily usage is recomputed from count-to-count
-  // deltas + receipts — that rate drives the AUTO reorder-point suggestion.
-  app.post('/api/cycle-counts/:id/complete', {
-    schema: { body: { type: 'object', required: ['counts'], additionalProperties: false,
-      properties: {
-        counts: { type: 'array', items: { type: 'object', required: ['itemId', 'counted'],
-          additionalProperties: false,
-          properties: {
-            itemId: { type: 'integer' },
-            counted: { type: 'integer', minimum: 0 },
-            reasonCode: { type: 'string', enum: [...VARIANCE_REASON_CODES] },
-            note: { type: 'string', maxLength: 300 },
-          } } },
-        nextScheduledFor: { type: 'string', minLength: 10, maxLength: 10 },
-      } } },
-  }, async (req, reply) => {
-    const id = Number((req.params as { id: string }).id);
-    const completedBy = req.user!.name;
-    const { counts, nextScheduledFor } = req.body as {
-      counts: { itemId: number; counted: number; reasonCode?: string; note?: string }[];
-      nextScheduledFor?: string;
-    };
-    // One transaction for the whole close-out: lines, adjustments, counts,
-    // usage rates, the session lock, the next session, and the audit row. The
-    // validation pass reads counts through it too, so nothing moves between
-    // "checked" and "booked".
-    return withTx(async (tx) => {
-      const [cc] = await tx.select().from(cycleCounts).where(eq(cycleCounts.id, id));
-      if (!cc) return reply.code(404).send({ error: 'Cycle count not found' });
-      if (cc.completedAt) return reply.code(409).send({ error: 'Already completed' });
-
-      const t = await inventorySettings(tx);
-      const allItems = await tx.select().from(inventoryItems);
-      const byId = new Map(allItems.map((i) => [i.id, i]));
-
-      // Pass 1 — validate against CURRENT counts (they may have moved since the
-      // client's review screen; the server's math is the one that binds).
-      const missingReason: { itemId: number; name: string }[] = [];
-      for (const c of counts) {
-        const item = byId.get(c.itemId);
-        if (!item) continue;
-        const v = varianceFor({ itemId: c.itemId, systemCount: item.count, counted: c.counted,
-          unitCostCents: costPerCountUnit(item) }, t);
-        if (v.aboveThreshold && !c.reasonCode) missingReason.push({ itemId: c.itemId, name: item.name });
-      }
-      if (missingReason.length > 0) {
-        return reply.code(400).send({
-          error: `Reason code required for ${missingReason.length} variance(s) above threshold`,
-          items: missingReason,
-        });
-      }
-
-      // Pass 2 — snapshot lines, book adjustments, reset counts.
-      let drift = 0;
-      const nowMs = Date.now();
-      const changes: { itemId: number; before: number; after: number; reason: string }[] = [];
-      for (const c of counts) {
-        const item = byId.get(c.itemId);
-        if (!item) continue;
-        const v = varianceFor({ itemId: c.itemId, systemCount: item.count, counted: c.counted,
-          unitCostCents: costPerCountUnit(item) }, t);
-        // A voluntarily-chosen reason on a small variance is kept — required
-        // only above threshold, never discarded.
-        await tx.insert(cycleCountLines).values({
-          cycleCountId: id, itemId: c.itemId, systemCount: item.count, countedQty: c.counted,
-          unitCostCents: costPerCountUnit(item),
-          reasonCode: v.delta !== 0 ? c.reasonCode ?? null : null,
-          note: c.note ?? null,
-        });
-        if (v.delta !== 0) {
-          drift++;
-          await tx.insert(inventoryAdjustments).values({
-            itemId: c.itemId, delta: v.delta,
-            reason: c.reasonCode ?? 'cycle_count',
-            note: c.note ?? null, createdBy: completedBy, cycleCountId: id,
-          });
-          await tx.update(inventoryItems).set({ count: c.counted }).where(eq(inventoryItems.id, c.itemId));
-          changes.push({ itemId: c.itemId, before: item.count, after: c.counted, reason: c.reasonCode ?? 'cycle_count' });
-        }
-      }
-      const [closed] = await tx.update(cycleCounts)
-        .set({ completedAt: new Date().toISOString(), completedBy,
-          notes: `${counts.length} items counted, ${drift} adjusted` })
-        .where(eq(cycleCounts.id, id)).returning();
-
-      // Rolling avg daily usage — needs the session marked complete first so the
-      // baseline lookup excludes this session's own lines by id.
-      for (const c of counts) {
-        if (byId.has(c.itemId)) await recomputeAvgDailyUse(c.itemId, c.counted, id, nowMs, tx);
-      }
-
-      // Auto-reschedule: completing a count ALWAYS queues the next one (default
-      // +7 days — the weekly rhythm the roll SKUs depend on). No human memory,
-      // no external calendar (deliberate — see TASKS.md Phase 11).
-      const next = nextScheduledFor
-        ?? new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
-      const [queued] = await tx.insert(cycleCounts).values({ scheduledFor: next }).returning();
-      await audit(tx, req, { action: 'cycle_count.complete', entity: 'cycle_count', entityId: id,
-        before: cc, after: { ...closed, itemsCounted: counts.length, changes, nextCycleCountId: queued.id } });
-      return { ok: true, itemsCounted: counts.length, itemsAdjusted: drift, nextScheduledFor: next };
-    });
+      .orderBy(desc(inventoryAdjustments.createdAt), desc(inventoryAdjustments.id)).limit(50);
   });
 
   // Needs-ordering view: every item at/below its reorder point (Min), sorted
@@ -377,10 +319,10 @@ export async function inventoryRoutes(app: FastifyInstance) {
       .sort((a, b) => (b.avgDailyUse ?? -1) - (a.avgDailyUse ?? -1));
   });
 
-  // Inventory valuation: cash tied up on the shelf. Value per item =
-  // on-hand ÷ factor (count units → purchase units) × last cost paid per
-  // purchase unit. Items with no recorded cost are counted separately so the
-  // total is honest about what it excludes.
+  // Inventory valuation: cash tied up on the shelf at moving-average cost
+  // (ADR 0006): on-hand × average cost per count unit. Items with no average
+  // yet (never received with a cost, no last cost) are counted separately so
+  // the total is honest about what it excludes.
   app.get('/api/inventory/valuation', async () => {
     const items = await db.select().from(inventoryItems);
     const cats = await db.select().from(categories);
@@ -389,9 +331,8 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const byCat = new Map<string, { valueCents: number; items: number }>();
     for (const i of items) {
       if (!i.active) continue;
-      if (i.lastCostCents == null) { unpricedItems++; continue; }
-      const f = i.purchaseToCountFactor > 0 ? i.purchaseToCountFactor : 1;
-      const v = Math.round((i.count / f) * i.lastCostCents);
+      if (i.avgCostCents <= 0) { unpricedItems++; continue; }
+      const v = extendedValueCents(i.count, i.avgCostCents);
       totalCents += v;
       pricedItems++;
       const key = i.categoryId != null ? catName.get(i.categoryId) ?? 'Other' : 'Other';
@@ -412,12 +353,13 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const rows = await db.select({
       createdAt: inventoryAdjustments.createdAt,
       delta: inventoryAdjustments.delta,
-      unitCostCents: inventoryAdjustments.unitCostCents,
+      // Per PURCHASE unit, as entered (the API name predates Phase 2).
+      unitCostCents: inventoryAdjustments.purchaseUnitCostCents,
       supplierName: suppliers.name,
     }).from(inventoryAdjustments)
       .leftJoin(suppliers, eq(inventoryAdjustments.supplierId, suppliers.id))
-      .where(and(eq(inventoryAdjustments.itemId, id), eq(inventoryAdjustments.reason, 'received')))
-      .orderBy(asc(inventoryAdjustments.createdAt));
+      .where(and(eq(inventoryAdjustments.itemId, id), eq(inventoryAdjustments.txnType, 'receipt')))
+      .orderBy(asc(inventoryAdjustments.createdAt), asc(inventoryAdjustments.id));
     return rows.filter((r) => r.unitCostCents != null);
   });
 
@@ -429,7 +371,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
     const id = Number((req.params as { id: string }).id);
     const t = await inventorySettings();
     const lines = await db.select().from(cycleCountLines)
-      .where(eq(cycleCountLines.itemId, id))
+      .where(and(eq(cycleCountLines.itemId, id), postedLine))
       .orderBy(desc(cycleCountLines.createdAt)).limit(26); // ~half a year of weekly counts
     const rows = lines.map((l) => {
       const v = varianceFor({ itemId: id, systemCount: l.systemCount, counted: l.countedQty,
@@ -481,15 +423,23 @@ export async function inventoryRoutes(app: FastifyInstance) {
         // create an orphan SKU the quote-time stock check silently never finds.
         const colorError = await validateSkuColor(b.materialId, color, tx);
         if (colorError) return reply.code(400).send({ error: colorError });
-        const [row] = await tx.insert(inventoryItems).values({
+        let [row] = await tx.insert(inventoryItems).values({
           name: `${material.name} · ${color} · ${b.nominalWidthIn}in`,
           materialId: b.materialId, color, nominalWidthIn: b.nominalWidthIn,
-          count: b.count ?? 0, lowStockThreshold: b.lowStockThreshold ?? 0,
+          lowStockThreshold: b.lowStockThreshold ?? 0,
           vendor: b.vendor ?? null, lastCostCents: b.lastCostCents ?? null,
+          avgCostCents: initialAvgCost(b.lastCostCents, 1),
           // Whole rolls by decision — see CLAUDE.md.
           purchaseUnit: 'roll', countUnit: 'roll',
         }).returning();
-        await audit(tx, req, { action: 'inventory_item.create', entity: 'inventory_item', entityId: row.id, after: row });
+        // Starting count = an 'opening' transaction (ADR 0006).
+        let opening = null;
+        if (b.count) {
+          const r = await postTransaction({ itemId: row.id, type: 'opening', qty: b.count,
+            reason: 'opening balance', source: { type: 'manual' }, user: txnUser(req) }, tx);
+          row = r.item; opening = r.txn;
+        }
+        await audit(tx, req, { action: 'inventory_item.create', entity: 'inventory_item', entityId: row.id, after: { ...row, opening } });
         reply.code(201);
         return row;
       });

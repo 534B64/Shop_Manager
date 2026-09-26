@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { get, post, put } from '../../lib/api';
+import { hasRole } from '../../lib/session';
 import { ROLL_SIZES, VARIANCE_REASON_CODES, ADJUST_REASON_LABELS, type VarianceReasonCode } from '../../../shared/domain';
 import { buildInventoryView } from '../../../shared/inventoryView';
 import type { GroupBy, InvViewItem, SearchOp, SortBy } from '../../../shared/inventoryView';
@@ -7,7 +8,12 @@ import { reviewCounts, type VarianceThresholds } from '../../../shared/countRevi
 import { suggestedMin } from '../../../shared/reorder';
 import type { Category, CategorySize, InventoryItem, Material, MaterialColor, Supplier } from '../../lib/types';
 
-interface CycleCount { id: number; scheduledFor: string; completedAt: string | null; }
+// Phase 2 (ADR 0006): counting → submitted (awaiting manager approval) → posted.
+interface CycleCountLine { itemId: number; name: string; systemCount: number; countedQty: number; reasonCode: string | null; note: string | null; }
+interface CycleCount {
+  id: number; scheduledFor: string; completedAt: string | null; status: 'counting' | 'submitted' | 'posted';
+  submittedBy: string | null; submittedAt: string | null; notes: string | null; lines?: CycleCountLine[];
+}
 interface Adjustment { id: number; delta: number; reason: string; note: string | null; createdBy: string | null; createdAt: string; }
 interface VarianceRow { createdAt: string; systemCount: number; counted: number; delta: number; pct: number | null; impactCents: number | null; aboveThreshold: boolean; reasonCode: string | null; note: string | null; }
 interface CostRow { createdAt: string; delta: number; unitCostCents: number | null; supplierName: string | null; }
@@ -24,7 +30,9 @@ interface InvSettings extends VarianceThresholds { reorderBufferDays: number; }
 const input = 'px-3 py-2.5 bg-bg border border-line rounded-token text-base';
 const $ = (cents: number) => `$${(cents / 100).toFixed(2)}`;
 const factorOf = (i: InventoryItem) => (i.purchaseToCountFactor && i.purchaseToCountFactor > 0 ? i.purchaseToCountFactor : 1);
-const costPerCountUnit = (i: InventoryItem) => (i.lastCostCents == null ? null : Math.round(i.lastCostCents / factorOf(i)));
+// Same rule as the server's snapshot: moving-average cost, else last cost ÷ factor.
+const costPerCountUnit = (i: InventoryItem) => (i.avgCostCents ? i.avgCostCents
+  : i.lastCostCents == null ? null : Math.round(i.lastCostCents / factorOf(i)));
 
 export default function Inventory() {
   const [items, setItems] = useState<InventoryItem[]>([]);
@@ -241,14 +249,43 @@ export default function Inventory() {
         ...(reasonSel[v.itemId] ? { reasonCode: reasonSel[v.itemId] } : {}),
         ...(noteSel[v.itemId]?.trim() ? { note: noteSel[v.itemId].trim() } : {}),
       }));
-      const r = await post<{ itemsAdjusted: number; nextScheduledFor: string }>(`/api/cycle-counts/${cc.id}/complete`, {
+      // A manager's submission posts in the same step; anyone else's waits
+      // for a manager to approve & post it (on-hand doesn't move until then).
+      const posting = hasRole('manager');
+      const r = await post<{ status: string; itemsAdjusted?: number; nextScheduledFor?: string }>(`/api/cycle-counts/${cc.id}/submit`, {
         counts,
         ...(nextDate ? { nextScheduledFor: nextDate } : {}),
+        ...(posting ? { post: true } : {}),
       });
       setCountPhase('off');
-      alert(`Cycle count done — ${r.itemsAdjusted} item(s) adjusted. Next count scheduled for ${r.nextScheduledFor}.`);
+      alert(r.status === 'posted'
+        ? `Cycle count posted — ${r.itemsAdjusted} item(s) adjusted. Next count scheduled for ${r.nextScheduledFor}.`
+        : 'Cycle count submitted — a manager needs to approve & post it before counts change.');
       refresh();
     } catch (e) { setError(e instanceof Error ? e.message : 'Submit failed'); }
+  }
+
+  // Manager step on a submitted count. Non-managers get the shared approval
+  // dialog (a manager types their name + PIN).
+  async function postCount() {
+    if (!cc) return;
+    setError('');
+    try {
+      const r = await post<{ itemsAdjusted: number; nextScheduledFor: string }>(`/api/cycle-counts/${cc.id}/post`, {});
+      alert(`Cycle count posted — ${r.itemsAdjusted} item(s) adjusted. Next count scheduled for ${r.nextScheduledFor}.`);
+      refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Post failed'); }
+  }
+
+  async function sendBackCount() {
+    if (!cc) return;
+    const reason = prompt('Send this count back for a recount — reason (optional):');
+    if (reason === null) return;
+    setError('');
+    try {
+      await post(`/api/cycle-counts/${cc.id}/send-back`, reason.trim() ? { reason: reason.trim() } : {});
+      refresh();
+    } catch (e) { setError(e instanceof Error ? e.message : 'Send back failed'); }
   }
 
   // ---- Receiving ----
@@ -374,7 +411,7 @@ export default function Inventory() {
       <div className="flex items-center justify-between mb-2">
         <h1 className="text-2xl font-bold">Inventory</h1>
         <div className="flex gap-2">
-          {cc && countPhase === 'off' && (
+          {cc && cc.status === 'counting' && countPhase === 'off' && (
             <button onClick={startCounting}
               className={`px-4 py-2 rounded-token font-semibold ${ccDue ? 'bg-warn text-white' : 'border border-line hover:bg-bg'}`}>
               {ccDue ? 'Cycle count due — start' : `Cycle count ${cc.scheduledFor} — start early`}
@@ -399,6 +436,43 @@ export default function Inventory() {
         )}
       </p>
       {error && <p className="text-danger mb-3">{error}</p>}
+      {cc && cc.status === 'counting' && cc.notes?.startsWith('Sent back') && countPhase === 'off' && (
+        <p className="text-warn mb-3">Cycle count needs a recount — {cc.notes}</p>
+      )}
+
+      {/* ---- Submitted count: awaiting manager approval (Phase 2) ---- */}
+      {cc && cc.status === 'submitted' && countPhase === 'off' && (
+        <div className="bg-surface border-2 border-warn rounded-token p-5 mb-6">
+          <h2 className="font-semibold text-lg mb-1">Cycle count submitted — awaiting manager approval</h2>
+          <p className="text-sm text-muted mb-3">
+            Counted by {cc.submittedBy ?? 'unknown'}{cc.submittedAt ? ` on ${new Date(cc.submittedAt).toLocaleString()}` : ''}.
+            On-hand doesn't change until it's posted; posting books each variance (counted − system at count time), so sales since then aren't lost.
+          </p>
+          <div className="space-y-1.5 mb-4">
+            {(cc.lines ?? []).filter((l) => l.countedQty !== l.systemCount).map((l) => {
+              const d = l.countedQty - l.systemCount;
+              return (
+                <div key={l.itemId} className="flex items-center gap-3 flex-wrap border border-line rounded-token p-2">
+                  <span className="font-semibold flex-1">{l.name}</span>
+                  <span className="text-sm text-muted">system {l.systemCount} → counted {l.countedQty}</span>
+                  <span className="font-bold text-warn">{d > 0 ? '+' : ''}{d}</span>
+                  {l.reasonCode && <span className="text-sm">{reasonLabel(l.reasonCode)}</span>}
+                  {l.note && <span className="text-sm text-muted w-full">{l.note}</span>}
+                </div>
+              );
+            })}
+            {(cc.lines ?? []).every((l) => l.countedQty === l.systemCount) && (
+              <p className="text-sm text-muted">{cc.lines?.length ?? 0} item(s) counted — no variances.</p>
+            )}
+          </div>
+          <div className="flex gap-3">
+            <button onClick={postCount} className="px-5 py-2.5 bg-accent text-accent-contrast rounded-token font-semibold">Approve & Post</button>
+            {hasRole('manager') && (
+              <button onClick={sendBackCount} className="px-5 py-2.5 border border-line rounded-token">Send back for recount</button>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* ---- Blind count: entry phase (system counts hidden on purpose) ---- */}
       {countPhase === 'entry' && cc && (
@@ -477,7 +551,7 @@ export default function Inventory() {
             </div>
             <button onClick={submitCount} disabled={flaggedMissingReason.length > 0}
               className="px-5 py-2.5 bg-accent text-accent-contrast rounded-token font-semibold disabled:opacity-50">
-              Submit & lock count
+              {hasRole('manager') ? 'Submit & post count' : 'Submit for approval'}
             </button>
             <button onClick={() => setCountPhase('entry')} className="px-5 py-2.5 border border-line rounded-token">← Back to entry</button>
             {flaggedMissingReason.length > 0 && (

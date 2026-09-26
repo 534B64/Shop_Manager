@@ -359,14 +359,14 @@ describe('Phase 11: cycle-count auto-reschedule + inventory adjust routes', () =
   it('completing a count always queues the next one (default +7 days)', async () => {
     const today = new Date().toISOString().slice(0, 10);
     const cc = (await inject({ method: 'POST', url: '/api/cycle-counts', payload: { scheduledFor: today } })).json();
-    const done = await inject({ method: 'POST', url: `/api/cycle-counts/${cc.id}/complete`, payload: { counts: [] } });
+    const done = await inject({ method: 'POST', url: `/api/cycle-counts/${cc.id}/submit`, payload: { counts: [], post: true } });
     expect(done.statusCode).toBe(200);
     const expected = new Date(Date.now() + 7 * 86400000).toISOString().slice(0, 10);
     expect(done.json().nextScheduledFor).toBe(expected);
     const next = (await inject({ method: 'GET', url: '/api/cycle-counts/next' })).json();
     expect(next?.scheduledFor).toBe(expected);
     // Clean up the auto-created session so later runs of this suite start fresh.
-    await inject({ method: 'POST', url: `/api/cycle-counts/${next.id}/complete`, payload: { counts: [], nextScheduledFor: '2099-01-01' } });
+    await inject({ method: 'POST', url: `/api/cycle-counts/${next.id}/submit`, payload: { counts: [], nextScheduledFor: '2099-01-01', post: true } });
   });
 
   it('adjusts a count with a reason and refuses to go below zero', async () => {
@@ -486,13 +486,13 @@ describe('cycle count v2: blind count, variance reasons, lock, snapshot', () => 
     const small = await makeItem({ count: 100 });                  // → counted 99 = -1%, 1 unit
     const cc = await openSession();
 
-    const missing = await inject({ method: 'POST', url: `/api/cycle-counts/${cc.id}/complete`,
+    const missing = await inject({ method: 'POST', url: `/api/cycle-counts/${cc.id}/submit`,
       payload: { counts: [{ itemId: big.id, counted: 4 }, { itemId: small.id, counted: 99 }] } });
     expect(missing.statusCode).toBe(400);
     expect(missing.json().items.map((i: { itemId: number }) => i.itemId)).toEqual([big.id]);
 
-    const done = await inject({ method: 'POST', url: `/api/cycle-counts/${cc.id}/complete`,
-      payload: { counts: [
+    const done = await inject({ method: 'POST', url: `/api/cycle-counts/${cc.id}/submit`,
+      payload: { post: true, counts: [
         { itemId: big.id, counted: 4, reasonCode: 'production_use', note: 'banner job used it' },
         { itemId: small.id, counted: 99 },
       ] } });
@@ -519,7 +519,7 @@ describe('cycle count v2: blind count, variance reasons, lock, snapshot', () => 
     expect(vari.rows[0].impactCents).toBe(3000); // 6 × $5.00
 
     // Session locked (one-shot) and the next one auto-queued.
-    const again = await inject({ method: 'POST', url: `/api/cycle-counts/${cc.id}/complete`,
+    const again = await inject({ method: 'POST', url: `/api/cycle-counts/${cc.id}/submit`,
       payload: { counts: [] } });
     expect(again.statusCode).toBe(409);
     const next = (await inject({ method: 'GET', url: '/api/cycle-counts/next' })).json();

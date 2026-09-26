@@ -91,3 +91,21 @@ machine noise). Representative run:
 millisecond; the jobs-search fix costs nothing measurable at 3,000 jobs. Writes are not in this
 GET-only baseline — each mutation now also writes one audit row inside its transaction, which is a
 single indexed insert. The inventory full-scan findings above still stand (next target).
+
+## After Phase 2 (2026-09-26)
+
+Fresh seed (`DB_PATH=/tmp/perf-2.db npm run db:seed:perf`, now 24,993 ledger rows including
+opening balances), same script:
+
+| Endpoint | After 1b ms | After 2 ms | Note |
+|---|---:|---:|---|
+| `/api/inventory` | 66.1 | 70.5 | unchanged read path (count cache); within run-to-run spread |
+| `/api/dashboard` | 53.8 | 54.7 | |
+| `/api/inventory/usage` | — | 59.6 | |
+| `/api/inventory/valuation` | — | 56.7 | now on-hand × moving average |
+| `/api/inventory/1/history` | — | 0.4 | |
+| `/api/balances` | 13.4 | 12.9 | |
+
+**No regression.** On-hand reads still use `inventory_items.count`; the ledger only costs an
+indexed `SUM` inside the guard trigger on writes. The full-table inventory endpoints (2.1 MB for
+`/api/inventory`) remain the paging target for the UI phase.

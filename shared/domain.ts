@@ -87,6 +87,32 @@ export const VARIANCE_REASON_CODES = [
 ] as const;
 export type VarianceReasonCode = (typeof VARIANCE_REASON_CODES)[number];
 
+// ---- Inventory transaction types (Phase 2, ADR 0006) ----
+// Every on-hand change is one inventory transaction of one of these types.
+// 'production' exists as a TYPE only — there is no production-consumption
+// workflow (the weekly cycle count stays the reconciler, see CLAUDE.md).
+export const TXN_TYPES = [
+  'receipt', 'sale', 'return', 'adjustment', 'transfer_out', 'transfer_in',
+  'production', 'count', 'opening',
+] as const;
+export type TxnType = (typeof TXN_TYPES)[number];
+/** Types whose rows must carry a real reason code. */
+export const TXN_TYPES_NEEDING_REASON: readonly TxnType[] = ['adjustment', 'count', 'production'];
+
+export const TXN_TYPE_LABELS: Record<TxnType, string> = {
+  receipt: 'Receipt', sale: 'Sale', return: 'Return', adjustment: 'Adjustment',
+  transfer_out: 'Transfer out', transfer_in: 'Transfer in', production: 'Production',
+  count: 'Cycle count', opening: 'Opening balance',
+};
+
+/** Which transaction type a manual /adjust reason books as. */
+export function txnTypeForReason(reason: AdjustReason): TxnType {
+  if (reason === 'received') return 'receipt';
+  if (reason === 'sold') return 'sale';
+  if (reason === 'used' || reason === 'production_use') return 'production';
+  return 'adjustment';
+}
+
 export const ADJUST_REASON_LABELS: Record<AdjustReason, string> = {
   received: 'Received',
   used: 'Used',

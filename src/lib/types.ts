@@ -46,6 +46,8 @@ export interface InventoryItem {
   // (reorder-up-to), and the count-derived rolling usage rate.
   supplierId?: number | null; purchaseUnit?: string | null; countUnit?: string | null;
   purchaseToCountFactor?: number; reorderMaxQty?: number | null; avgDailyUse?: number | null;
+  // Moving weighted-average cost per count unit (Phase 2, ADR 0006).
+  avgCostCents?: number;
 }
 export interface Supplier {
   id: number; name: string; leadTimeDays: number; contact: string | null;

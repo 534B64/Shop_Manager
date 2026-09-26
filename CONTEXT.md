@@ -83,8 +83,24 @@ used in code, docs, or conversation, it means exactly this.
 
 ### Inventory
 
-- **Inventory item** — a simple unit count with a low-stock threshold. No
-  per-job consumption, deliberately.
+- **Inventory item** — something the shop stocks and counts, with a low-stock
+  threshold. No per-job consumption, deliberately.
+- **Inventory transaction** — one recorded change to how many of an item are
+  on the shelf: a receipt, sale, return, adjustment, transfer, count posting,
+  production use, or opening balance. Says who, when, why, and what document
+  caused it. Never edited or removed once written.
+- **On-hand** — how many of an item the shop has, at one location or in
+  total. It is exactly the sum of the item's inventory transactions; nobody
+  types it in.
+- **Location** — a place stock sits ("Shop" by default). A **transfer** moves
+  stock between locations without changing the item's total.
+- **Opening balance** — the transaction that starts an item's history: its
+  count when first created, or whatever an older record held that its
+  history didn't explain.
+- **Average cost** — what one count unit of an item has cost the shop, on
+  average, across everything received. Each receipt blends in its price;
+  when the shelf was empty, the new receipt's price becomes the average.
+  Inventory value = on-hand × average cost.
 - **Roll SKU** — an inventory item keyed `material + color + nominal width`
   (e.g. `651 · Red · 24in`). Unique per key (DB-enforced); color must be on the
   material's color list.
@@ -93,10 +109,15 @@ used in code, docs, or conversation, it means exactly this.
   nothing), `in_stock`, `suboptimal` (optimal width out, a wider fitting width
   in), `out_of_stock`. Never blocks, never deducts. *This is the only
   job↔inventory relationship in the system.*
-- **Adjustment** — a signed count change with a mandatory reason
-  (received/used/damaged/cycle_count/correction) and who did it.
-- **Cycle count** — the weekly recount session; completing one auto-schedules
-  the next (+7 days).
+- **Adjustment** — an inventory transaction that corrects on-hand outside of
+  receiving, selling, or counting (damage, waste, theft, a data-entry fix).
+  Always has a reason code and needs a manager's approval.
+- **Cycle count** — the weekly recount session. People count blind, then
+  **submit**; the difference from what the system expected is the
+  **variance**. A manager **posts** the count (the variances become
+  transactions) or sends it back to be recounted. Posting schedules the next
+  count (+7 days). Stock that moves between submitting and posting stays
+  moved.
 - **Category** — inventory taxonomy (browsing/admin defaults only). Orthogonal
   to roll SKUs and the stock check; no pricing effect.
 

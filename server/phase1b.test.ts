@@ -259,7 +259,9 @@ describe('transactions', () => {
       const { jobs, payments, inventoryAdjustments, inventoryItems, auditLog } = schema;
       expect(await dbm.db.select().from(jobs).where(orm.eq(jobs.clientRef, clientRef))).toHaveLength(0);
       expect(await dbm.db.select().from(payments).where(orm.eq(payments.clientRef, `${clientRef}:pay`))).toHaveLength(0);
-      expect(await dbm.db.select().from(inventoryAdjustments).where(orm.eq(inventoryAdjustments.itemId, item.id))).toHaveLength(0);
+      // Only the opening-balance transaction from creating the item (ADR 0006).
+      const txns = await dbm.db.select().from(inventoryAdjustments).where(orm.eq(inventoryAdjustments.itemId, item.id));
+      expect(txns.map((t) => t.txnType)).toEqual(['opening']);
       const [it] = await dbm.db.select().from(inventoryItems).where(orm.eq(inventoryItems.id, item.id));
       expect(it.count).toBe(5);
       const audits = await dbm.db.select().from(auditLog).where(orm.like(auditLog.afterJson, '%ROLLBACK-TEST%'));

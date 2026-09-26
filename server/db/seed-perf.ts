@@ -22,6 +22,7 @@ const { db, runMigrations } = await import('./index.js');
 const S = await import('./schema/index.js');
 const { sql } = await import('drizzle-orm');
 const { seedDemoUsers } = await import('./seed-users.js');
+const { txnTypeForReason } = await import('../../shared/domain.js');
 
 const ANCHOR = new Date('2026-09-25T17:00:00.000Z'); // fixed → repeatable data
 const DAY = 86_400_000;
@@ -146,6 +147,14 @@ await db.transaction(async (tx) => {
       createdAt: isoAgo(int(30, 730)),
     });
   }
+  // On-hand only moves through the ledger (ADR 0006): items go in at 0 and
+  // reach their target count via the ledger rows built further down.
+  const targetCounts = items.map((i) => i.count as number);
+  for (const i of items) {
+    i.count = 0;
+    const f = i.purchaseToCountFactor && i.purchaseToCountFactor > 0 ? i.purchaseToCountFactor : 1;
+    i.avgCostCents = i.lastCostCents != null ? Math.round(i.lastCostCents / f) : 0;
+  }
   const itemIds = await insertBatched(tx, S.inventoryItems, items, true);
 
   // ---------------- customers (500) ----------------
@@ -233,26 +242,48 @@ await db.transaction(async (tx) => {
   // ---------------- cycle counts (weekly, 2 yrs) ----------------
   const ccRows = Array.from({ length: 104 }, (_, w) => {
     const at = isoAgo((104 - w) * 7 - 7);
-    return { scheduledFor: at.slice(0, 10), completedAt: at, completedBy: 'josiah' };
+    return { scheduledFor: at.slice(0, 10), completedAt: at, completedBy: 'josiah',
+      status: 'posted', submission: 1, submittedAt: at, submittedBy: 'josiah', postedBy: 'amy' };
   });
-  ccRows.push({ scheduledFor: new Date(ANCHOR.getTime() + 7 * DAY).toISOString().slice(0, 10), completedAt: null as any, completedBy: null as any });
+  ccRows.push({ scheduledFor: new Date(ANCHOR.getTime() + 7 * DAY).toISOString().slice(0, 10), completedAt: null as any,
+    completedBy: null as any, status: 'counting', submission: 0, submittedAt: null as any, submittedBy: null as any, postedBy: null as any });
   await insertBatched(tx, S.cycleCounts, ccRows, false);
 
-  // ---------------- inventory adjustments (20,000) ----------------
+  // ---------------- inventory transactions (20,000 + openings) ----------------
   // Reason mix roughly shop-shaped: lots of sales/usage, periodic receipts + counts.
+  // One 'opening' row per item makes the ledger sum land on its target count;
+  // rows go in oldest-first and the DB trigger maintains balances + counts.
   const REASONS = ['sold', 'sold', 'used', 'used', 'received', 'received', 'cycle_count', 'production_use', 'waste_scrap', 'damaged', 'correction', 'theft_loss', 'receiving_error', 'other'] as const;
   const adjRows: (typeof S.inventoryAdjustments.$inferInsert)[] = [];
   for (let i = 0; i < 20_000; i++) {
     const reason = pick(REASONS);
     const receipt = reason === 'received';
+    const itemIdx = int(0, itemIds.length - 1);
+    const delta = receipt ? int(1, 60) : -int(1, 12) * (reason === 'cycle_count' && chance(0.4) ? -1 : 1);
+    const note = chance(0.1) ? 'perf seed' : null;
+    const createdBy = pick(['josiah', 'amy']);
+    const cost = receipt ? int(100, 20000) : null;
+    const f = items[itemIdx].purchaseToCountFactor ?? 1;
     adjRows.push({
-      itemId: itemIds[int(0, itemIds.length - 1)],
-      delta: receipt ? int(1, 60) : -int(1, 12) * (reason === 'cycle_count' && chance(0.4) ? -1 : 1),
-      reason, note: chance(0.1) ? 'perf seed' : null, createdBy: pick(['josiah', 'amy']),
-      unitCostCents: receipt ? int(100, 20000) : null, supplierId: receipt ? supIds[int(0, supIds.length - 1)] : null,
+      itemId: itemIds[itemIdx], delta, reason, note, createdBy,
+      txnType: reason === 'cycle_count' ? 'count' : txnTypeForReason(reason), locationId: 1,
+      sourceType: receipt ? 'receipt' : 'manual',
+      purchaseUnitCostCents: cost, unitCostCents: cost != null ? Math.round(cost / f) : items[itemIdx].avgCostCents,
+      supplierId: receipt ? supIds[int(0, supIds.length - 1)] : null,
       createdAt: isoAgo(int(0, 729)),
     });
   }
+  const sums = new Map<number, number>();
+  for (const r of adjRows) sums.set(r.itemId, (sums.get(r.itemId) ?? 0) + r.delta);
+  itemIds.forEach((itemId, k) => {
+    const opening = targetCounts[k] - (sums.get(itemId) ?? 0);
+    if (opening === 0) return;
+    adjRows.push({
+      itemId, delta: opening, reason: 'opening balance', txnType: 'opening', locationId: 1,
+      sourceType: 'migration', unitCostCents: items[k].avgCostCents, createdAt: items[k].createdAt as string,
+    });
+  });
+  adjRows.sort((a, b) => (a.createdAt as string).localeCompare(b.createdAt as string));
   await insertBatched(tx, S.inventoryAdjustments, adjRows, false);
 });
 

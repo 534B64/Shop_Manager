@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index, primaryKey } from 'drizzle-orm/sqlite-core';
 import { nowIso } from './common.js';
 import { materials } from './materials.js';
 import { users } from './users.js';
@@ -73,6 +73,10 @@ export const categoryFields = sqliteTable('category_fields', {
 export const inventoryItems = sqliteTable('inventory_items', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
+  // Total on-hand across locations, in count units — a CACHE of the ledger
+  // sum (Phase 2, ADR 0006). The AFTER INSERT trigger on
+  // inventory_adjustments maintains it; a guard trigger rejects any other
+  // write. App code never sets it — post a transaction instead.
   count: integer('count').notNull().default(0),
   lowStockThreshold: integer('low_stock_threshold').notNull().default(0),
   vendor: text('vendor'),
@@ -113,47 +117,102 @@ export const inventoryItems = sqliteTable('inventory_items', {
   // Rolling average daily usage in count units, recomputed when a cycle-count
   // session closes: (baseline count + receipts since − new count) / days.
   avgDailyUse: real('avg_daily_use'),
+  // Moving weighted-average cost per COUNT unit (Phase 2, ADR 0006). Only a
+  // receipt with a cost moves it; every other transaction is stamped with it.
+  avgCostCents: integer('avg_cost_cents').notNull().default(0),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
 });
 
+// ---- Locations (Phase 2, ADR 0006) ----
+// Where stock sits. Migration 0015 seeds id 1 "Shop" (DEFAULT_LOCATION_ID) and
+// put every existing count there. Archive, never delete.
+export const locations = sqliteTable('locations', {
+  id: integer('id').primaryKey({ autoIncrement: true }),
+  name: text('name').notNull(),
+  createdAt: text('created_at').notNull().$defaultFn(nowIso),
+  archivedAt: text('archived_at'),
+  archivedBy: integer('archived_by').references(() => users.id),
+});
+
+// On-hand per item per location — maintained ONLY by the ledger trigger; a
+// guard trigger rejects any value that isn't the per-location ledger sum.
+export const inventoryBalances = sqliteTable('inventory_balances', {
+  itemId: integer('item_id').notNull().references(() => inventoryItems.id),
+  locationId: integer('location_id').notNull().references(() => locations.id),
+  onHand: integer('on_hand').notNull().default(0),
+}, (t) => ({
+  pk: primaryKey({ columns: [t.itemId, t.locationId] }),
+  locationIdx: index('inventory_balances_location_idx').on(t.locationId),
+}));
+
+// The inventory transaction ledger (Phase 2, ADR 0006) — the table keeps its
+// historical name; the domain term is "inventory transaction". Append-only
+// (0014 triggers). Every on-hand change is one row here; the AFTER INSERT
+// trigger applies `delta` to inventory_balances and inventory_items.count.
+// Write only through postTransaction() in server/modules/inventory/service.ts.
 export const inventoryAdjustments = sqliteTable('inventory_adjustments', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   itemId: integer('item_id').notNull().references(() => inventoryItems.id),
+  // Signed quantity in COUNT units.
   delta: integer('delta').notNull(),
+  // See TXN_TYPES in shared/domain.ts.
+  txnType: text('txn_type').notNull().default('adjustment'),
+  // Nullable in the DB only because SQLite can't ADD a REFERENCES column with
+  // a default; a BEFORE INSERT trigger rejects NULL, so it's notNull here.
+  locationId: integer('location_id').notNull().references(() => locations.id),
   // See ADJUST_REASONS in shared/domain.ts — extended 2026-07-07 with 'sold'
   // (counter-sale deduction) and the cycle-count variance reason codes.
+  // Required (a real code) for adjustment / count / production.
   reason: text('reason').notNull(),
   note: text('note'), // discrepancy explanation
-  createdBy: text('created_by'),
-  // Receiving: cost paid per PURCHASE unit on 'received' rows — the per-receipt
-  // cost history behind the cost-trend view (lastCostCents on the item is only
-  // the latest). supplierId records who it actually came from (may differ from
-  // the item's preferred supplier).
+  createdBy: text('created_by'), // display name, kept for history
+  userId: integer('user_id').references(() => users.id), // null = system / migration
+  // Cost per COUNT unit at the time: the receipt's cost on receipts, the
+  // item's average cost on everything else.
   unitCostCents: integer('unit_cost_cents'),
+  // Receiving: cost paid per PURCHASE unit (as entered) — the per-receipt
+  // history behind the cost-trend view. supplierId records who it actually
+  // came from (may differ from the item's preferred supplier).
+  purchaseUnitCostCents: integer('purchase_unit_cost_cents'),
   supplierId: integer('supplier_id').references(() => suppliers.id),
-  // Set when this adjustment was written by a count session closing — ties the
-  // ledger row to the session, and excludes it from receipt/usage math.
+  // What caused it: 'receipt' | 'job' | 'cycle_count' | 'transfer' | 'manual'
+  // | 'migration' (+ id; a transfer's two rows share one id).
+  sourceType: text('source_type').notNull().default('manual'),
+  sourceId: text('source_id'),
+  // Set on rows posted by a count session — ties the ledger row to the session.
   cycleCountId: integer('cycle_count_id').references(() => cycleCounts.id),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
 }, (t) => ({
   itemCreatedIdx: index('inventory_adjustments_item_created_idx').on(t.itemId, t.createdAt),
   createdAtIdx: index('inventory_adjustments_created_at_idx').on(t.createdAt),
+  itemIdIdx: index('inventory_adjustments_item_id_idx').on(t.itemId, t.id),
+  itemLocDeltaIdx: index('inventory_adjustments_item_loc_delta_idx').on(t.itemId, t.locationId, t.delta),
 }));
 
 export const cycleCounts = sqliteTable('cycle_counts', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   scheduledFor: text('scheduled_for').notNull(), // ISO date
-  completedAt: text('completed_at'),
+  completedAt: text('completed_at'), // when it was POSTED (Phase 2)
   completedBy: text('completed_by'), // who walked the count (v2, 2026-07-07)
   notes: text('notes'),
+  // Approval flow (Phase 2, ADR 0006): counting → submitted → posted. A
+  // manager can send a submitted count back to counting; `submission` counts
+  // the rounds so the posted round's lines are the ones that count.
+  status: text('status').notNull().default('counting'),
+  submission: integer('submission').notNull().default(0),
+  submittedAt: text('submitted_at'),
+  submittedBy: text('submitted_by'),
+  postedBy: text('posted_by'), // the approving manager
+  nextScheduledFor: text('next_scheduled_for'), // the counter's pick for the next session, used at posting
 });
 
 // One row per item actually counted in a session — the immutable snapshot
 // behind variance review and the per-item variance-trend view. systemCount is
-// what the app believed at the moment the session closed; countedQty is what
-// was on the shelf. unitCostCents is the per-COUNT-unit cost snapshot used for
-// the dollar-impact sort (lastCostCents ÷ purchaseToCountFactor at the time).
+// what the app believed when the count was SUBMITTED; countedQty is what was
+// on the shelf; posting books counted − systemCount (not counted − current).
+// unitCostCents is the per-COUNT-unit cost snapshot used for the dollar-impact
+// sort (average cost at the time; lastCost ÷ factor before Phase 2).
 // reasonCode is required (server-enforced) when the variance beat the
 // configured threshold; below it the drift books as plain 'cycle_count'.
 export const cycleCountLines = sqliteTable('cycle_count_lines', {
@@ -165,5 +224,8 @@ export const cycleCountLines = sqliteTable('cycle_count_lines', {
   unitCostCents: integer('unit_cost_cents'),
   reasonCode: text('reason_code'),
   note: text('note'),
+  // Which submission round of the session this line belongs to (a sent-back
+  // round's lines stay — the table is append-only).
+  submission: integer('submission').notNull().default(1),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
 }, (t) => ({ countIdx: index('cycle_count_lines_count_idx').on(t.cycleCountId) }));

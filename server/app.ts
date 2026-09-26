@@ -5,7 +5,7 @@ import { materialRoutes } from './modules/materials/index.js';
 import { customerRoutes } from './modules/customers/index.js';
 import { jobRoutes } from './modules/jobs/index.js';
 import { paymentRoutes } from './modules/payments/index.js';
-import { inventoryRoutes, categoryRoutes, supplierRoutes } from './modules/inventory/index.js';
+import { inventoryRoutes, cycleCountRoutes, locationRoutes, categoryRoutes, supplierRoutes } from './modules/inventory/index.js';
 import { settingsRoutes } from './modules/settings/index.js';
 import { userRoutes } from './modules/users/index.js';
 import { auditRoutes } from './modules/audit/index.js';
@@ -41,6 +41,8 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   await app.register(jobRoutes);
   await app.register(paymentRoutes);
   await app.register(inventoryRoutes);
+  await app.register(cycleCountRoutes);
+  await app.register(locationRoutes);
   await app.register(settingsRoutes);
   await app.register(userRoutes);
   await app.register(categoryRoutes);
