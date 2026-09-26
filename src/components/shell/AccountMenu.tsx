@@ -4,8 +4,16 @@ import { CUSTOM_ACCENTS } from '../../../shared/domain';
 import { Badge, Icon, cx, useFocusTrap } from '../m3';
 import { sessionUser, signOut, savePrefs, getPrefs } from '../../lib/session';
 import { seedOf } from '../../lib/theme';
+import { schemeFor } from '../../lib/m3/scheme';
 
 const ROLE_LABEL = { cashier: 'Cashier', manager: 'Manager', admin: 'Admin' } as const;
+
+/** A swatch shows the accent as it becomes primary, with its on-primary check
+ *  mark — an AA-tested pair for any accent (src/lib/m3/m3.test.ts). */
+const swatchStyle = (accent: string) => {
+  const s = schemeFor(accent, 'light');
+  return { background: s.primary, color: s['on-primary'] };
+};
 
 /** Who's signed in, their role, and their accent (the accent tells accounts apart). */
 export default function AccountMenu() {
@@ -45,8 +53,8 @@ export default function AccountMenu() {
                 {CUSTOM_ACCENTS.map((c) => (
                   <button key={c} type="button" role="radio" aria-checked={seed === c} aria-label={`Accent ${c}`} onClick={() => pick(c)}
                     className="state-layer flex items-center justify-center h-12 w-12 rounded-shape-full">
-                    <span className={cx('h-8 w-8 rounded-shape-full flex items-center justify-center text-white', seed === c && 'ring-2 ring-offset-2 ring-on-surface ring-offset-surface-container')}
-                      style={{ background: c }}>
+                    <span className={cx('h-8 w-8 rounded-shape-full flex items-center justify-center', seed === c && 'ring-2 ring-offset-2 ring-on-surface ring-offset-surface-container')}
+                      style={swatchStyle(c)}>
                       {seed === c && <Icon name="check" size={18} />}
                     </span>
                   </button>

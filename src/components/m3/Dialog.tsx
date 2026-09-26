@@ -4,7 +4,25 @@ import { cx } from './cx';
 
 const FOCUSABLE = 'a[href],button:not([disabled]),input:not([disabled]),select:not([disabled]),textarea:not([disabled]),[tabindex]:not([tabindex="-1"])';
 
-/** Keep Tab inside `el`; Escape calls onEscape. Restores focus on unmount. */
+/**
+ * Where Tab should go inside a trap, or null to let the browser move normally.
+ * `inside` = focus is currently within the trapped element; when it isn't (it
+ * escaped, e.g. to the page behind), Tab brings it back to the first/last item.
+ */
+export function nextTrapFocus<T>(items: T[], current: T | null, shift: boolean, inside: boolean): T | null {
+  if (items.length === 0) return null;
+  const [a, z] = [items[0], items[items.length - 1]];
+  if (!inside) return shift ? z : a;
+  if (shift && current === a) return z;
+  if (!shift && current === z) return a;
+  return null;
+}
+
+// Open traps, innermost last: only the top one handles keys.
+const openTraps: HTMLElement[] = [];
+
+/** Keep Tab inside `el` (listening on the whole document, so focus can't
+ *  escape to the page behind); Escape calls onEscape. Restores focus on close. */
 export function useFocusTrap(el: React.RefObject<HTMLElement>, active: boolean, onEscape?: () => void) {
   const escRef = useRef(onEscape);
   escRef.current = onEscape;
@@ -14,17 +32,24 @@ export function useFocusTrap(el: React.RefObject<HTMLElement>, active: boolean, 
     const before = document.activeElement as HTMLElement | null;
     const first = root.querySelector<HTMLElement>('[autofocus],[data-autofocus]') ?? root.querySelector<HTMLElement>(FOCUSABLE);
     (first ?? root).focus();
+    openTraps.push(root);
     const onKey = (e: KeyboardEvent) => {
+      if (openTraps[openTraps.length - 1] !== root) return;
       if (e.key === 'Escape' && escRef.current) { e.stopPropagation(); escRef.current(); return; }
       if (e.key !== 'Tab') return;
       const items = [...root.querySelectorAll<HTMLElement>(FOCUSABLE)].filter((n) => n.offsetParent !== null);
-      if (items.length === 0) { e.preventDefault(); return; }
-      const [a, z] = [items[0], items[items.length - 1]];
-      if (e.shiftKey && document.activeElement === a) { e.preventDefault(); z.focus(); }
-      else if (!e.shiftKey && document.activeElement === z) { e.preventDefault(); a.focus(); }
+      const current = document.activeElement as HTMLElement | null;
+      const inside = !!current && root.contains(current);
+      const next = nextTrapFocus(items, current, e.shiftKey, inside);
+      if (items.length === 0) { e.preventDefault(); root.focus(); return; }
+      if (next) { e.preventDefault(); next.focus(); }
     };
-    root.addEventListener('keydown', onKey);
-    return () => { root.removeEventListener('keydown', onKey); before?.focus?.(); };
+    document.addEventListener('keydown', onKey, true);
+    return () => {
+      document.removeEventListener('keydown', onKey, true);
+      openTraps.splice(openTraps.indexOf(root), 1);
+      before?.focus?.();
+    };
   }, [active, el]);
 }
 

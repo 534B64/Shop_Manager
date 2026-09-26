@@ -100,7 +100,10 @@ All routes live in `src/routes.tsx`. To add a page:
 
 Currently several routes point at the old all-in-one page (e.g. every `/inventory/*` renders `Inventory`,
 `/quotes/:id` renders `Quotes`, `/customers/:id` renders `Customers`). When you split a page, make each route
-render its own view and read `:id` from the URL. `/pos/*`, `/reports`, `/audit` are placeholders (`ComingSoon`).
+render its own view and read `:id` from the URL. `/pos/counter`, `/pos/invoices[/:number]`, `/pos/returns/new`, `/pos/drawer`, `/reports`, `/audit` are placeholders (`ComingSoon`).
+For now `/pos` itself redirects to `/payments` (it was the Payments page for years, so bookmarks go
+there); when the counter-sale page is built, move it from `/pos/counter` to `/pos`, drop the redirect, and point
+the POS nav item at `/pos`.
 
 ## Checklist before you hand off
 

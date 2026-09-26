@@ -38,8 +38,30 @@ function pairs(theme: SchemeTheme): [Role, Role, number][] {
   out.push(['inverse-primary', 'inverse-surface', text]);
   // Tonal/filled buttons and nav indicators sit on surfaces: 3:1 as UI parts.
   out.push(['primary', 'surface-container-low', 3]);
+  // Filled chips/headers that replaced `text-white` on the legacy aliases
+  // (bg-warn / bg-danger / bg-ok) and the Orders column headers, plus the
+  // colored column borders (3:1 as UI parts).
+  for (const [fg, bg] of STATUS_PAIRS) out.push([fg, bg, text]);
+  for (const bg of SURFACES) {
+    for (const border of STATUS_BORDERS) out.push([border, bg, 3]);
+  }
   return out;
 }
+
+const STATUS_PAIRS: [Role, Role][] = [
+  ['on-warning', 'warning'], ['on-error', 'error'], ['on-success', 'success'],
+  ['on-primary', 'primary'], ['on-secondary', 'secondary'], ['on-tertiary', 'tertiary'],
+  ['on-tertiary-container', 'tertiary-container'], ['inverse-on-surface', 'inverse-surface'],
+];
+const STATUS_BORDERS: Role[] = ['primary', 'secondary', 'tertiary', 'warning', 'success', 'inverse-surface'];
+
+const failing = (seed: string, theme: SchemeTheme) => {
+  const s = schemeFor(seed, theme);
+  return pairs(theme)
+    .map(([fg, bg, min]) => ({ fg, bg, min, ratio: contrastRatio(s[fg], s[bg]) }))
+    .filter((p) => p.ratio < p.min)
+    .map((p) => `${seed} ${theme}: ${p.fg} on ${p.bg}: ${p.ratio.toFixed(2)} < ${p.min}`);
+};
 
 describe('M3 tone solver', () => {
   it('hits the requested tone for any hue', () => {
@@ -78,13 +100,22 @@ describe('WCAG AA on every role pair used', () => {
   for (const [name, seed] of Object.entries(SEEDS)) {
     for (const theme of THEMES) {
       it(`${name} ${seed} — ${theme}`, () => {
-        const s = schemeFor(seed, theme);
-        const fails = pairs(theme)
-          .map(([fg, bg, min]) => ({ fg, bg, min, ratio: contrastRatio(s[fg], s[bg]) }))
-          .filter((p) => p.ratio < p.min)
-          .map((p) => `${p.fg} on ${p.bg}: ${p.ratio.toFixed(2)} < ${p.min}`);
-        expect(fails).toEqual([]);
+        expect(failing(seed, theme)).toEqual([]);
       });
     }
   }
+
+  // Any accent someone could pick: 24 hues x 3 chroma x 3 lightness levels.
+  it('holds for a sweep of 216 seeds in every theme', () => {
+    const fails: string[] = [];
+    for (let h = 0; h < 360; h += 15) {
+      for (const c of [0.04, 0.12, 0.2]) {
+        for (const tone of [30, 55, 80]) {
+          const seed = solveTone(h, c, tone);
+          for (const theme of THEMES) fails.push(...failing(seed, theme));
+        }
+      }
+    }
+    expect(fails).toEqual([]);
+  });
 });

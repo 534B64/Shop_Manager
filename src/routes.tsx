@@ -26,7 +26,8 @@ export const NAV: (NavItem & { min?: Role })[] = [
   { to: '/quotes', label: 'Quotes', icon: 'quote' },
   { to: '/orders', label: 'Orders', icon: 'orders' },
   { to: '/quick', label: 'Quick Order', icon: 'bolt' },
-  { to: '/pos', label: 'POS', icon: 'cart' },
+  // Points at the placeholder until the counter page takes over /pos.
+  { to: '/pos/counter', label: 'POS', icon: 'cart' },
   { to: '/payments', label: 'Payments', icon: 'payments' },
   { to: '/customers', label: 'Customers', icon: 'people' },
   { to: '/inventory', label: 'Inventory', icon: 'inventory' },
@@ -55,7 +56,11 @@ const DEFS: Def[] = [
   { path: '/inventory/:id', element: <Inventory /> },
 
   // POS — filled in from the POS backend by a later builder.
-  { path: '/pos', element: soon('Counter sale', 'The new point-of-sale screen is on its way. Until then, ring up counter sales in Quick Order and record payments in Payments.', posLinks) },
+  // /pos was the Payments page for years: it goes there until the counter page
+  // exists. The POS builder moves the counter page from /pos/counter to /pos
+  // and removes this redirect.
+  { path: '/pos', element: <Navigate to="/payments" replace /> },
+  { path: '/pos/counter', element: soon('Counter sale', 'The new point-of-sale screen is on its way. Until then, ring up counter sales in Quick Order and record payments in Payments.', posLinks) },
   { path: '/pos/invoices', element: soon('Invoices', 'Invoice list — coming with the POS.', posLinks) },
   { path: '/pos/invoices/:number', element: soon('Invoice', 'Invoice detail — coming with the POS.', posLinks) },
   { path: '/pos/returns/new', element: soon('New return', 'Returns — coming with the POS. Refunds are recorded in Payments for now.', posLinks) },

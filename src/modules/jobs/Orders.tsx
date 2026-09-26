@@ -10,10 +10,17 @@ const PROOF_COLUMNS: JobStatus[] = ['quote', 'approved', 'design'];
 // The four steps are always visible, even when empty.
 const MAIN_COLUMNS: JobStatus[] = ['acknowledged', 'in_progress', 'done', 'picked_up'];
 
-// Color barrier per phase — instantly see where each column starts.
-const STATUS_COLORS: Record<string, string> = {
-  quote: '#8a8a8a', approved: '#0e8a8a', design: '#6d3bbf',
-  acknowledged: '#2456c4', in_progress: '#d98a06', done: '#1a7a3a', picked_up: '#555555',
+// Color barrier per phase — instantly see where each column starts. M3 role
+// pairs (header fill + its on-color, and the matching border), so every theme
+// and accent keeps AA contrast (tested in src/lib/m3/m3.test.ts).
+const STATUS_TONES: Record<string, { header: string; border: string }> = {
+  quote: { header: 'bg-secondary text-on-secondary', border: 'var(--md-sys-color-secondary)' },
+  approved: { header: 'bg-tertiary text-on-tertiary', border: 'var(--md-sys-color-tertiary)' },
+  design: { header: 'bg-tertiary-container text-on-tertiary-container', border: 'var(--md-sys-color-tertiary)' },
+  acknowledged: { header: 'bg-primary text-on-primary', border: 'var(--md-sys-color-primary)' },
+  in_progress: { header: 'bg-warning text-on-warning', border: 'var(--md-sys-color-warning)' },
+  done: { header: 'bg-success text-on-success', border: 'var(--md-sys-color-success)' },
+  picked_up: { header: 'bg-inverse-surface text-inverse-on-surface', border: 'var(--md-sys-color-inverse-surface)' },
 };
 
 function dueClass(dueDate: string | null): string {
@@ -124,11 +131,10 @@ export default function Orders() {
         style={{ gridTemplateColumns: `repeat(${columns.length + 1}, minmax(0, 1fr))` }}>
         {columns.map(({ status, items }) => (
           <div key={status} className="min-w-0">
-            <div className="rounded-token mb-2 px-3 py-2 font-semibold text-white"
-              style={{ background: STATUS_COLORS[status] }}>
+            <div className={`rounded-token mb-2 px-3 py-2 font-semibold ${STATUS_TONES[status].header}`}>
               {STATUS_LABELS[status]} <span className="opacity-80 font-normal">({items.length})</span>
             </div>
-            <div className="space-y-2 border-l-4 pl-2" style={{ borderColor: STATUS_COLORS[status] }}>
+            <div className="space-y-2 border-l-4 pl-2" style={{ borderColor: STATUS_TONES[status].border }}>
               {items.map((j) => {
                 const fwd = nextStatus(j.status as JobStatus, j.useProofFlow);
                 const back = prevStatus(j.status as JobStatus, j.useProofFlow);
@@ -161,10 +167,10 @@ export default function Orders() {
           </div>
         ))}
         <div className="min-w-0">
-          <div className="rounded-token mb-2 px-3 py-2 font-semibold text-white" style={{ background: STATUS_COLORS.picked_up }}>
+          <div className={`rounded-token mb-2 px-3 py-2 font-semibold ${STATUS_TONES.picked_up.header}`}>
             Picked Up <span className="opacity-80 font-normal">({history.length})</span>
           </div>
-          <div className="border-l-4 pl-2 space-y-2" style={{ borderColor: STATUS_COLORS.picked_up }}>
+          <div className="border-l-4 pl-2 space-y-2" style={{ borderColor: STATUS_TONES.picked_up.border }}>
             {history.slice(0, 6).map((j) => (
               <div key={j.id} className="bg-surface border border-line rounded-token p-3 opacity-70 cursor-pointer hover:opacity-100"
                 onClick={() => openDetail(j)}>
@@ -215,7 +221,7 @@ export default function Orders() {
                   <button onClick={startEdit} className="px-4 py-2 bg-accent text-accent-contrast rounded-token text-sm font-semibold">Edit</button>
                 )}
                 {!ro && (
-                  <button onClick={saveDetail} className="px-4 py-2 bg-ok text-white rounded-token text-sm font-semibold">Save</button>
+                  <button onClick={saveDetail} className="px-4 py-2 bg-success text-on-success rounded-token text-sm font-semibold">Save</button>
                 )}
                 <button onClick={() => removeJob(detail)}
                   className="px-3 py-2 border border-line rounded-token text-sm text-danger hover:bg-bg">Remove</button>

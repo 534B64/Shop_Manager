@@ -413,7 +413,7 @@ export default function Inventory() {
         <div className="flex gap-2">
           {cc && cc.status === 'counting' && countPhase === 'off' && (
             <button onClick={startCounting}
-              className={`px-4 py-2 rounded-token font-semibold ${ccDue ? 'bg-warn text-white' : 'border border-line hover:bg-bg'}`}>
+              className={`px-4 py-2 rounded-token font-semibold ${ccDue ? 'bg-warning text-on-warning' : 'border border-line hover:bg-bg'}`}>
               {ccDue ? 'Cycle count due — start' : `Cycle count ${cc.scheduledFor} — start early`}
             </button>
           )}
@@ -752,7 +752,7 @@ export default function Inventory() {
                 <span className="text-muted text-xs w-3">{isCollapsed ? '▶' : '▼'}</span>
                 <span className="font-semibold flex-1">{g.label}</span>
                 <span className="text-xs px-2 py-0.5 rounded-token border border-line text-muted">{g.count}</span>
-                {g.lowCount > 0 && <span className="text-xs px-2 py-0.5 rounded-token bg-warn text-white">LOW {g.lowCount}</span>}
+                {g.lowCount > 0 && <span className="text-xs px-2 py-0.5 rounded-token bg-warning text-on-warning">LOW {g.lowCount}</span>}
               </button>
               {!isCollapsed && (
                 <div className="divide-y divide-line">
@@ -777,8 +777,8 @@ export default function Inventory() {
                             {i.materialId != null && <span className="text-xs px-1.5 py-0.5 rounded-token border border-line text-muted">roll</span>}
                             {i.color && <span className="text-xs px-1.5 py-0.5 rounded-token border border-line text-muted">{i.color}</span>}
                             {sizeLabel && <span className="text-xs px-1.5 py-0.5 rounded-token border border-line text-muted">{sizeLabel}</span>}
-                            {out && <span className="text-xs px-2 py-0.5 rounded-token bg-danger text-white">OUT</span>}
-                            {low && <span className="text-xs px-2 py-0.5 rounded-token bg-warn text-white">LOW</span>}
+                            {out && <span className="text-xs px-2 py-0.5 rounded-token bg-error text-on-error">OUT</span>}
+                            {low && <span className="text-xs px-2 py-0.5 rounded-token bg-warning text-on-warning">LOW</span>}
                             {i.avgDailyUse != null && i.avgDailyUse > 0 && (
                               <span className="text-xs px-1.5 py-0.5 rounded-token border border-line text-muted" title="Avg daily usage from cycle counts">~{i.avgDailyUse}/day</span>
                             )}
@@ -915,7 +915,7 @@ export default function Inventory() {
         <div className="bg-surface border border-line rounded-token mt-4">
           <h3 className="font-semibold px-4 pt-3 pb-1">Change log — {items.find((i) => i.id === history.itemId)?.name}</h3>
           {history.repeated && (
-            <p className="mx-4 mb-2 px-3 py-2 rounded-token bg-warn text-white text-sm font-semibold">
+            <p className="mx-4 mb-2 px-3 py-2 rounded-token bg-warning text-on-warning text-sm font-semibold">
               Repeated count variance — 3+ of the last 4 counts were off. Check the unit conversion, how it's being counted, or whether the supplier is shorting orders.
             </p>
           )}
