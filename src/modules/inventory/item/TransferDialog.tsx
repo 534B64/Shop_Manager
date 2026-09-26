@@ -3,8 +3,9 @@ import { Button, Dialog, Select, TextField } from '../../../components/m3';
 import { post } from '../../../lib/api';
 import { useQuery } from '../../../lib/query';
 import type { InventoryItem } from '../../../lib/types';
-import { errorText, parseWhole } from '../logic';
+import { parseWhole } from '../logic';
 import type { Balance, Location } from '../types';
+import { errorText } from '../../../lib/errorText';
 
 /** Move stock between locations (manager+). The item's total doesn't change. */
 export default function TransferDialog({ open, onClose, item, locations, onDone }: {

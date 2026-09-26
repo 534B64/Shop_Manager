@@ -6,10 +6,10 @@ import { del } from '../../../lib/api';
 import { formatCents, formatDate } from '../../../lib/format';
 import { STATUS_LABELS, type JobStatus } from '../../../../shared/domain';
 import CopyPo from '../shared/CopyPo';
-import { errorText } from '../shared/errors';
 import { jobMoves } from '../shared/jobLogic';
 import { useMoveJob } from '../shared/useMoveJob';
 import type { JobDetail } from '../types';
+import { errorText } from '../../../lib/errorText';
 
 export default function JobHeader({ job, onChanged }: { job: JobDetail; onChanged: () => void }) {
   const navigate = useNavigate();

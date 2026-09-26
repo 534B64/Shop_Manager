@@ -9,7 +9,6 @@ import { formatCents } from '../../../lib/format';
 import type { InventoryItem } from '../../../lib/types';
 import StockStatus from '../components/StockStatus';
 import TxnTable from '../components/TxnTable';
-import { useKeyset } from '../components/useKeyset';
 import { useCategories, useInvSettings, useLocations, useSuppliers, useUnits } from '../components/lookups';
 import type { Txn } from '../types';
 import ItemFieldsCard from './ItemFieldsCard';
@@ -17,6 +16,7 @@ import { BalancesCard, CostCard } from './StockCards';
 import VarianceCard from './VarianceCard';
 import AdjustDialog from './AdjustDialog';
 import TransferDialog from './TransferDialog';
+import { useKeysetMore } from '../../../lib/keysetPaging';
 
 function Stat({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -37,7 +37,7 @@ export default function ItemDetail() {
   const locations = useLocations();
   const [rev, setRev] = useState(0); // bumps after a stock change so the cards reload
   const [dialog, setDialog] = useState<'adjust' | 'transfer' | null>(null);
-  const history = useKeyset<Txn>(`/api/inventory/${id}/transactions`, {}, 25);
+  const history = useKeysetMore<Txn>(`/api/inventory/${id}/transactions`, {}, 25);
   const manager = hasRole('manager');
   const item = q.data;
 

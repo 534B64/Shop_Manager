@@ -4,19 +4,19 @@ import { useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { Button, Card, Chip, Icon, TextField } from '../../../components/m3';
 import { get, post } from '../../../lib/api';
-import { useQuery } from '../../../lib/query';
 import { formatCents } from '../../../lib/format';
 import { newRef } from '../../../lib/ref';
+import type { Page } from '../../../lib/query';
 import type { Customer, InventoryItem } from '../../../lib/types';
 import CustomerSearch from '../shared/CustomerSearch';
-import { errorText, isDrawerClosed } from '../shared/errors';
 import { METHODS, saleBody } from './sale';
 import StockPicker from './StockPicker';
-import TodaySales, { type PaymentRow } from './TodaySales';
+import TodaySales, { useTodaySales } from './TodaySales';
+import { errorText, isDrawerClosed } from '../../../lib/errorText';
 
 
 export default function QuickOrderPage() {
-  const payments = useQuery<PaymentRow[]>('/api/payments');
+  const payments = useTodaySales();
   const [custText, setCustText] = useState('');
   const [customer, setCustomer] = useState<Customer | null>(null);
   const [title, setTitle] = useState('');
@@ -36,7 +36,8 @@ export default function QuickOrderPage() {
   async function walkIn() {
     setError(null);
     try {
-      const found = await get<Customer[]>('/api/customers?q=Walk-in');
+      // Paged search (SQL LIKE) — the unpaged one only looked through 2000 rows.
+      const found = (await get<Page<Customer>>('/api/customers?q=Walk-in&limit=10&offset=0')).rows;
       const w = found.find((c) => c.name.toLowerCase() === 'walk-in')
         ?? await post<Customer>('/api/customers', { name: 'Walk-in', notes: 'Generic walk-in counter customer' });
       pickCustomer(w);

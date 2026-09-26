@@ -3,10 +3,10 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Dialog, TextField, showSnackbar } from '../../../components/m3';
 import { post } from '../../../lib/api';
 import { formatCents, parseDollarsToCents } from '../../../lib/format';
-import { errorText } from '../lib/errors';
 import type { DrawerView } from '../types';
 import OverShortBadge from './OverShortBadge';
 import { previewOverShort } from './overShort';
+import { errorText } from '../../../lib/errorText';
 
 const cents = (s: string) => (s.trim() === '' ? null : parseDollarsToCents(s));
 

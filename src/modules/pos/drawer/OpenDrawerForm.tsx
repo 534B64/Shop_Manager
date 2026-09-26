@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { Button, TextField, showSnackbar } from '../../../components/m3';
 import { post } from '../../../lib/api';
 import { formatCents, parseDollarsToCents } from '../../../lib/format';
-import { errorText } from '../lib/errors';
+import { errorText } from '../../../lib/errorText';
 
 /** Count the starting cash and open the drawer. Used on the drawer page and inline at the counter. */
 export default function OpenDrawerForm({ onOpened, compact }: { onOpened: () => void; compact?: boolean }) {

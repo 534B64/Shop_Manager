@@ -101,3 +101,13 @@ describe('GET /api/balances paging', () => {
     expect(q.body.rows[0].owedCents).toBe(q.body.rows[0].finalPriceCents - 500);
   });
 });
+
+describe('GET /api/reports/summary (Quick Order "today")', () => {
+  it('filters by date or timestamp in SQL and counts payments apart from refunds', async () => {
+    const all = await get('/api/reports/summary');
+    expect(all.body).toMatchObject({ count: 4, paymentCount: 4, paymentsCents: 1000 + 500 + 100 + all.body.byMethod.card });
+    const since = new Date(Date.now() - 60_000).toISOString();
+    expect((await get(`/api/reports/summary?from=${since}`)).body.paymentCount).toBe(4);
+    expect((await get('/api/reports/summary?to=2000-01-01')).body).toMatchObject({ count: 0, paymentCount: 0, paymentsCents: 0 });
+  });
+});

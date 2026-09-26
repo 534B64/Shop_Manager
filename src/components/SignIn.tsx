@@ -40,17 +40,17 @@ export default function SignIn({ onDone }: { onDone: () => void }) {
     catch (e) { setError(e instanceof Error ? e.message : 'Setup failed'); }
   }
 
-  const pinInput = 'flex-1 px-3 py-3 bg-bg border border-line rounded-token text-base';
+  const pinInput = 'flex-1 min-w-0 px-3 py-3 bg-surface-container-highest text-on-surface border border-outline rounded-shape-extra-small text-body-large';
 
   return (
-    <div className="fixed inset-0 z-50 bg-bg flex items-center justify-center app-chrome">
-      <div className="bg-surface border border-line rounded-token p-8 w-full max-w-md">
-        <h1 className="text-2xl font-bold mb-1">Decals Plus — Shop Manager</h1>
+    <div className="fixed inset-0 z-50 bg-surface flex items-center justify-center app-chrome p-4">
+      <div className="bg-surface-container-low text-on-surface shadow-elevation-1 rounded-shape-large p-8 w-full max-w-md">
+        <h1 className="text-headline-small mb-1">Decals Plus — Shop Manager</h1>
         {status?.needsSetup ? (
           <>
-            <p className="text-muted mb-5">First-time setup: create the owner (admin) account. Everyone else is added in Settings → Accounts.</p>
+            <p className="text-body-large text-on-surface-variant mb-5">First-time setup: create the owner (admin) account. Everyone else is added in Settings → Accounts.</p>
             <div className="space-y-2">
-              <input autoFocus className="w-full px-3 py-3 bg-bg border border-line rounded-token text-base"
+              <input autoFocus className="w-full px-3 py-3 bg-surface-container-highest text-on-surface border border-outline rounded-shape-extra-small text-body-large"
                 placeholder="Your name" value={setupName} onChange={(e) => setSetupName(e.target.value)} />
               <div className="flex gap-2">
                 <input type="password" inputMode="numeric" className={pinInput} placeholder="PIN (4+ digits)"
@@ -58,20 +58,20 @@ export default function SignIn({ onDone }: { onDone: () => void }) {
                 <input type="password" inputMode="numeric" className={pinInput} placeholder="Repeat PIN"
                   value={setupPin2} onChange={(e) => setSetupPin2(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && setup()} />
               </div>
-              <button onClick={setup} className="w-full px-5 py-3 bg-accent text-accent-contrast rounded-token font-semibold">Create admin &amp; sign in</button>
+              <button onClick={setup} className="state-layer w-full min-h-12 px-5 py-3 bg-primary text-on-primary rounded-shape-full text-label-large">Create admin &amp; sign in</button>
             </div>
           </>
         ) : (
           <>
-            <p className="text-muted mb-5">Sign in. Orders and payments are recorded under your name.</p>
+            <p className="text-body-large text-on-surface-variant mb-5">Sign in. Orders and payments are recorded under your name.</p>
             {status && status.accounts.length === 0 && (
-              <p className="text-warn mb-4">No accounts can sign in yet — an admin must set a PIN in Settings → Accounts.</p>
+              <p className="text-warning mb-4">No accounts can sign in yet — an admin must set a PIN in Settings → Accounts.</p>
             )}
             <div className="grid grid-cols-2 gap-2 mb-5">
               {(status?.accounts ?? []).map((u) => (
                 <button key={u.id} onClick={() => { setPicked(u.name); setPin(''); setError(''); }}
-                  className={`px-4 py-4 rounded-token font-semibold text-lg border ${
-                    picked === u.name ? 'bg-accent text-accent-contrast border-accent' : 'border-line hover:bg-bg'
+                  className={`state-layer min-h-12 px-4 py-4 rounded-shape-medium text-title-medium border ${
+                    picked === u.name ? 'bg-primary text-on-primary border-primary' : 'border-outline-variant text-on-surface'
                   }`}>
                   {u.name}
                 </button>
@@ -82,12 +82,12 @@ export default function SignIn({ onDone }: { onDone: () => void }) {
                 <input type="password" inputMode="numeric" autoFocus className={pinInput}
                   placeholder={`PIN for ${picked}`} value={pin} onChange={(e) => setPin(e.target.value)}
                   onKeyDown={(e) => e.key === 'Enter' && login()} />
-                <button onClick={login} className="px-5 py-3 bg-accent text-accent-contrast rounded-token font-semibold">Sign in</button>
+                <button onClick={login} className="state-layer min-h-12 px-5 py-3 bg-primary text-on-primary rounded-shape-full text-label-large">Sign in</button>
               </div>
             )}
           </>
         )}
-        {error && <p className="text-danger mt-3">{error}</p>}
+        {error && <p className="text-error mt-3">{error}</p>}
       </div>
     </div>
   );

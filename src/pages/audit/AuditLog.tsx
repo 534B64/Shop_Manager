@@ -21,7 +21,7 @@ export default function AuditLog({ params, set, users, names }: {
     return () => clearTimeout(t);
   }, [idText]); // eslint-disable-line react-hooks/exhaustive-deps
   const bad = !!(f.from && f.to && f.from > f.to);
-  const log = useKeyset<AuditRow>(bad ? '/api/audit?never=1' : '/api/audit', f, 50);
+  const log = useKeyset<AuditRow>(bad ? null : '/api/audit', f, 50);
   const [open, setOpen] = useState<AuditRow | null>(null);
   const [busy, setBusy] = useState(false);
 

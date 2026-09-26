@@ -3,12 +3,12 @@ import { useNavigate } from 'react-router-dom';
 import { Button, Checkbox, Dialog, TextField, showSnackbar } from '../../components/m3';
 import { post } from '../../lib/api';
 import { formatCents } from '../../lib/format';
-import { errorText, isDrawerClosed, isNetworkError } from '../pos/lib/errors';
 import { newRef } from '../../lib/ref';
 import OpenDrawerForm from '../pos/drawer/OpenDrawerForm';
 import PaymentMethods from '../pos/counter/PaymentMethods';
 import { METHOD_LABELS } from '../pos/types';
 import { PAYMENT_METHODS, checkPayment, overpayCents, type Balance } from './logic';
+import { errorText, isDrawerClosed, isNetworkError } from '../../lib/errorText';
 
 /** Take a payment on a job with a balance. Cash can record tendered + change; cash needs the drawer. */
 export default function RecordPaymentDialog({ job, onClose, onDone }: { job: Balance; onClose: () => void; onDone: () => void }) {

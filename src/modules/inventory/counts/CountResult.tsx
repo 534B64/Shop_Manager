@@ -8,8 +8,9 @@ import { hasRole } from '../../../lib/session';
 import { formatCents, formatDate } from '../../../lib/format';
 import { reviewCounts } from '../../../../shared/countReview';
 import { useInvSettings } from '../components/lookups';
-import { errorText, reasonLabel, signed } from '../logic';
+import { reasonLabel, signed } from '../logic';
 import type { CycleCount } from '../types';
+import { errorText } from '../../../lib/errorText';
 
 export default function CountResult({ cc, onChanged }: { cc: CycleCount; onChanged: (msg: string) => void }) {
   const t = useInvSettings();

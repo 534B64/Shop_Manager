@@ -1,5 +1,4 @@
 // Pure helpers for the inventory pages (tested in logic.test.ts).
-import { ApiError } from '../../lib/api';
 import type { Params } from '../../lib/query';
 import { ADJUST_REASON_LABELS, TXN_TYPE_LABELS, type AdjustReason, type TxnType } from '../../../shared/domain';
 import type { InventoryItem } from '../../lib/types';
@@ -51,15 +50,6 @@ export const txnLabel = (t: string) => TXN_TYPE_LABELS[t as TxnType] ?? t;
 export const MANUAL_REASONS: AdjustReason[] = ['used', 'damaged', 'correction', 'production_use', 'waste_scrap', 'theft_loss', 'receiving_error', 'other'];
 /** These need a note saying what happened. */
 export const noteRequired = (reason: string) => reason === 'correction' || reason === 'other' || reason === 'theft_loss';
-
-export function errorText(e: unknown): string {
-  if (e instanceof ApiError) {
-    const m = e.data.message ?? e.data.error;
-    return typeof m === 'string' ? m : e.message;
-  }
-  if (e instanceof Error) return e.message === 'Failed to fetch' ? 'Can’t reach the server — check the wifi and try again.' : e.message;
-  return 'Something went wrong';
-}
 
 // ---- Item list URL state (filters, sort, page live in the search params) ----
 

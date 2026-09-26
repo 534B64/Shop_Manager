@@ -17,7 +17,6 @@ export interface Txn {
   /** Cross-item list only. */
   itemName?: string; locationName?: string | null; countUnit?: string | null;
 }
-export interface KeysetPage<T> { rows: T[]; nextBefore: number | null }
 
 export interface VarianceRow {
   createdAt: string; systemCount: number; counted: number; delta: number; pct: number | null;

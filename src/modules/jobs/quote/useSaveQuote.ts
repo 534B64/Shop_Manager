@@ -5,10 +5,10 @@ import { useState } from 'react';
 import { post, put } from '../../../lib/api';
 import { formatCents } from '../../../lib/format';
 import type { Customer, Material } from '../../../lib/types';
-import { errorText, lockedInvoice } from '../shared/errors';
 import type { JobDetail, PriceCheck } from '../types';
 import { buildPayload, validate, type CustomerDraft, type QuoteDraft } from './draft';
 import type { QuoteMath } from './math';
+import { errorText, lockedInvoice } from '../../../lib/errorText';
 
 type Saved = JobDetail & { priceCheck?: PriceCheck };
 

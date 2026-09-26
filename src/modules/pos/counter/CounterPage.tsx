@@ -6,7 +6,6 @@ import { useQuery } from '../../../lib/query';
 import { formatCents } from '../../../lib/format';
 import PosHeader from '../PosHeader';
 import CustomerPicker from '../lib/CustomerPicker';
-import { errorText, isDrawerClosed, isNetworkError } from '../lib/errors';
 import OpenDrawerForm from '../drawer/OpenDrawerForm';
 import type { DrawerView } from '../types';
 import DrawerStatusBar from './DrawerStatusBar';
@@ -18,6 +17,7 @@ import Receipt, { type SaleResult } from './Receipt';
 import { useSaleDraft, newDraft } from './useSaleDraft';
 import { digitsToCents } from './keypad';
 import * as C from './cart';
+import { errorText, isDrawerClosed, isNetworkError } from '../../../lib/errorText';
 
 export default function CounterPage() {
   const drawerQ = useQuery<{ drawer: DrawerView | null }>('/api/drawer/current');

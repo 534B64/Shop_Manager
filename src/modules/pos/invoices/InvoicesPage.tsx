@@ -5,12 +5,12 @@ import { Button, DataTable, EmptyState, Select, TextField, type Column } from '.
 import { formatCents } from '../../../lib/format';
 import { parseInvoiceNumber } from '../../../../shared/invoice';
 import PosHeader from '../PosHeader';
-import { useKeyset } from '../lib/keyset';
-import KeysetPager from '../lib/KeysetPager';
+import KeysetPager from '../../../components/KeysetPager';
 import CustomerPicker, { type PickedCustomer } from '../lib/CustomerPicker';
 import { formatWhen } from '../lib/when';
 import type { InvoiceHeader } from '../types';
 import InvoiceStatus from './InvoiceStatus';
+import { useKeyset } from '../../../lib/keysetPaging';
 
 const COLS: Column<InvoiceHeader>[] = [
   { key: 'number', header: 'Invoice', width: 'w-28', render: (i) => (
@@ -65,7 +65,7 @@ export default function InvoicesPage() {
         empty={<EmptyState title={filtered ? 'No invoices match' : 'No invoices yet'}>
           {filtered ? 'Try a wider date range or clear the filters.' : 'Counter sales and paid-up jobs get an invoice automatically.'}</EmptyState>}
         onRowClick={(i) => nav(`/pos/invoices/${i.numberDisplay}`)} />
-      <KeysetPager state={list} />
+      {(list.hasPrev || list.hasNext) && <KeysetPager paging={list} touch />}
     </div>
   );
 }

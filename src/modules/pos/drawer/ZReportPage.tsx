@@ -6,10 +6,10 @@ import { download } from '../../../lib/api';
 import { useQuery } from '../../../lib/query';
 import { formatCents } from '../../../lib/format';
 import PosHeader from '../PosHeader';
-import { errorText } from '../lib/errors';
 import { formatWhen } from '../lib/when';
 import type { DrawerView } from '../types';
 import ZReportView from './ZReportView';
+import { errorText } from '../../../lib/errorText';
 
 export default function ZReportPage() {
   const { id } = useParams();

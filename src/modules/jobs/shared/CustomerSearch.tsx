@@ -2,6 +2,7 @@
 import { forwardRef, useEffect, useId, useState, type KeyboardEvent } from 'react';
 import { TextField, cx } from '../../../components/m3';
 import { get } from '../../../lib/api';
+import type { Page } from '../../../lib/query';
 import type { Customer } from '../../../lib/types';
 
 interface Props {
@@ -31,8 +32,9 @@ const CustomerSearch = forwardRef<HTMLInputElement, Props>(function CustomerSear
     if (q.length < 2 || picked) { setMatches([]); return; }
     let live = true;
     const t = setTimeout(() => {
-      get<Customer[]>(`/api/customers?q=${encodeURIComponent(q)}`)
-        .then((rows) => { if (live) { setMatches(rows.slice(0, 8)); setActive(0); setOpen(true); } })
+      // Paged search: the server sends only the first 10 matches, never the whole table.
+      get<Page<Customer>>(`/api/customers?q=${encodeURIComponent(q)}&limit=10&offset=0`)
+        .then((p) => { if (live) { setMatches(p.rows.slice(0, 8)); setActive(0); setOpen(true); } })
         .catch(() => { if (live) setMatches([]); });
     }, 200);
     return () => { live = false; clearTimeout(t); };

@@ -3,10 +3,10 @@ import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, DataTable, EmptyState, TextField, type Column } from '../../../components/m3';
 import { formatCents } from '../../../lib/format';
 import PosHeader from '../PosHeader';
-import { useKeyset } from '../lib/keyset';
-import KeysetPager from '../lib/KeysetPager';
+import KeysetPager from '../../../components/KeysetPager';
 import { formatWhen } from '../lib/when';
 import { methodLabel, type ReturnRow } from '../types';
+import { useKeyset } from '../../../lib/keysetPaging';
 
 const COLS: Column<ReturnRow>[] = [
   { key: 'id', header: 'Return', width: 'w-24', render: (r) => (
@@ -34,7 +34,7 @@ export default function ReturnsPage() {
         loading={list.loading} error={list.error} onRetry={list.reload}
         empty={<EmptyState title="No returns">Start one from an invoice, or with New return.</EmptyState>}
         onRowClick={(r) => nav(`/pos/returns/${r.id}`)} />
-      <KeysetPager state={list} />
+      {(list.hasPrev || list.hasNext) && <KeysetPager paging={list} touch />}
     </div>
   );
 }

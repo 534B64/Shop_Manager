@@ -3,7 +3,8 @@ import { Button, Card, CardHeader, Select, Switch, TextField, showSnackbar } fro
 import { put } from '../../../lib/api';
 import type { Category, InventoryItem, Supplier } from '../../../lib/types';
 import { suggestedMin } from '../../../../shared/reorder';
-import { errorText, factorOf, parseWhole } from '../logic';
+import { factorOf, parseWhole } from '../logic';
+import { errorText } from '../../../lib/errorText';
 
 const fromItem = (i: InventoryItem) => ({
   name: i.name, categoryId: i.categoryId != null ? String(i.categoryId) : '', sizeText: i.sizeText ?? '', color: i.color ?? '',

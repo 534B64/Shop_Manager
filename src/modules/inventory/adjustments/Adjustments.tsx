@@ -8,9 +8,9 @@ import { TXN_TYPES } from '../../../../shared/domain';
 import InventoryHeader from '../components/InventoryHeader';
 import ItemPicker from '../components/ItemPicker';
 import TxnTable from '../components/TxnTable';
-import { useKeyset } from '../components/useKeyset';
 import { txnLabel } from '../logic';
 import type { Txn } from '../types';
+import { useKeysetMore } from '../../../lib/keysetPaging';
 
 const KEYS = ['type', 'from', 'to', 'item'] as const;
 
@@ -20,7 +20,7 @@ export default function Adjustments() {
   const set = (k: (typeof KEYS)[number], v: string) =>
     setSp((cur) => { const n = new URLSearchParams(cur); if (v) n.set(k, v); else n.delete(k); return n; });
   const itemQ = useQuery<InventoryItem>(f.item ? `/api/inventory/${f.item}` : null);
-  const list = useKeyset<Txn>('/api/inventory/transactions', { type: f.type, from: f.from, to: f.to, itemId: f.item }, 50);
+  const list = useKeysetMore<Txn>('/api/inventory/transactions', { type: f.type, from: f.from, to: f.to, itemId: f.item }, 50);
   const any = KEYS.some((k) => f[k]);
 
   return (

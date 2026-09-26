@@ -4,11 +4,11 @@ import { useState } from 'react';
 import { Button, Dialog, TextField, showSnackbar } from '../../components/m3';
 import { post } from '../../lib/api';
 import { formatCents, parseDollarsToCents } from '../../lib/format';
-import { errorText, isDrawerClosed } from '../pos/lib/errors';
 import { newRef } from '../../lib/ref';
 import PaymentMethods from '../pos/counter/PaymentMethods';
 import { METHOD_LABELS, methodLabel, type PaymentRow } from '../pos/types';
 import { PAYMENT_METHODS } from './logic';
+import { errorText, isDrawerClosed } from '../../lib/errorText';
 
 const drawerMsg = 'Cash refunds need the cash drawer open (POS → Drawer). Or pick another method.';
 

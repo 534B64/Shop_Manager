@@ -4,10 +4,10 @@ import { Button, Card, CardHeader, Chip, EmptyState, LinearProgress, TextField, 
 import { download } from '../../lib/api';
 import { useQuery, withParams } from '../../lib/query';
 import { formatCents } from '../../lib/format';
-import { errorText } from '../pos/lib/errors';
 import { lastDays, todayIso } from '../pos/lib/when';
 import { methodLabel } from '../pos/types';
 import type { Summary } from './logic';
+import { errorText } from '../../lib/errorText';
 
 const save = (path: string, name: string) => download(path, name).catch((e) => showSnackbar(`Download failed: ${errorText(e)}`));
 

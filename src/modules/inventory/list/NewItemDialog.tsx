@@ -3,7 +3,8 @@ import { Button, Dialog, Select, TextField } from '../../../components/m3';
 import { post } from '../../../lib/api';
 import { useQuery } from '../../../lib/query';
 import type { Category, CategorySize, InventoryItem, Supplier } from '../../../lib/types';
-import { errorText, parseWhole } from '../logic';
+import { parseWhole } from '../logic';
+import { errorText } from '../../../lib/errorText';
 
 const BLANK = { name: '', categoryId: '', unit: '', color: '', size: '', sizeCustom: '', count: '', min: '', supplierId: '', orderNote: '' };
 

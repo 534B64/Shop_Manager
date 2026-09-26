@@ -6,7 +6,7 @@ import { Button, Dialog, showSnackbar } from '../../../components/m3';
 import { ApiError, post, put } from '../../../lib/api';
 import { formatCents } from '../../../lib/format';
 import { STATUS_LABELS, type JobStatus } from '../../../../shared/domain';
-import { errorText } from './errors';
+import { errorText } from '../../../lib/errorText';
 
 interface Target { id: number; title: string }
 

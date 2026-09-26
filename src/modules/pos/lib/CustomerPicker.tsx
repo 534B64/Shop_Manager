@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Chip, List, ListItem, TextField } from '../../../components/m3';
-import { useQuery } from '../../../lib/query';
+import { useQuery, type Page } from '../../../lib/query';
 import type { Customer } from '../../../lib/types';
 
 export interface PickedCustomer { id: number; name: string; phone?: string | null }
@@ -12,8 +12,9 @@ export default function CustomerPicker({ value, onChange, emptyLabel = 'Walk-in'
   const [text, setText] = useState('');
   const [q, setQ] = useState('');
   useEffect(() => { const t = setTimeout(() => setQ(text.trim()), 250); return () => clearTimeout(t); }, [text]);
-  const res = useQuery<Customer[]>(q.length >= 2 ? `/api/customers?q=${encodeURIComponent(q)}` : null);
-  const matches = q.length >= 2 ? (res.data ?? []).slice(0, 6) : [];
+  // Paged search: only the first 10 matches come over the wire.
+  const res = useQuery<Page<Customer>>(q.length >= 2 ? `/api/customers?q=${encodeURIComponent(q)}&limit=10&offset=0` : null);
+  const matches = q.length >= 2 ? (res.data?.rows ?? []).slice(0, 6) : [];
 
   const pick = (c: PickedCustomer | null) => { onChange(c); setText(''); setQ(''); };
 

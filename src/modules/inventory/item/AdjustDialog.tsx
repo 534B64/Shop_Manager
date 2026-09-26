@@ -3,8 +3,9 @@ import { Button, Chip, Dialog, Select, TextField } from '../../../components/m3'
 import { post } from '../../../lib/api';
 import { hasRole } from '../../../lib/session';
 import type { InventoryItem } from '../../../lib/types';
-import { MANUAL_REASONS, errorText, noteRequired, parseWhole, reasonLabel } from '../logic';
+import { MANUAL_REASONS, noteRequired, parseWhole, reasonLabel } from '../logic';
 import type { Location } from '../types';
+import { errorText } from '../../../lib/errorText';
 
 /** Correct on-hand outside receiving/sales/counts. Needs a reason; a cashier gets the manager-approval prompt. */
 export default function AdjustDialog({ open, onClose, item, locations, onDone, presetReason = '' }: {

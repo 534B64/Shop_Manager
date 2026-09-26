@@ -1,27 +1,4 @@
-// DEPRECATED (ADR 0009): use src/components/m3 for new UI. Kept for copyToClipboard
-// and un-migrated pages. Shared design-system primitives (Phase 9). One place for the look so every
-// screen inherits it instead of re-deriving button/input/card classes. Built on
-// the existing CSS-variable tokens (--accent, --line, --surface, etc.) and the
-// light / dark / high-contrast (minimal) themes — these are class strings, not new colors.
-//
-// Adoption is incremental: new/updated UI should import from here; existing
-// pages can migrate a row at a time without a risky big-bang reskin.
-
-/** Inputs & selects — consistent height, border, radius, and focus affordance. */
-export const ui = {
-  input: 'px-3 py-2.5 bg-bg border border-line rounded-token text-base w-full',
-  inputSm: 'px-2 py-1.5 bg-bg border border-line rounded-token text-sm',
-
-  // Buttons. Primary = accent; subtle = outline; danger = destructive outline.
-  btnPrimary: 'px-4 py-2.5 bg-accent text-accent-contrast rounded-token font-semibold disabled:opacity-50',
-  btn: 'px-4 py-2.5 border border-line rounded-token hover:bg-bg disabled:opacity-50',
-  btnSm: 'px-3 py-1.5 text-sm border border-line rounded-token hover:bg-bg',
-  btnDanger: 'px-3 py-1.5 text-sm border border-line rounded-token text-danger hover:bg-bg',
-
-  card: 'bg-surface border border-line rounded-token p-4',
-  chip: 'text-xs px-2 py-0.5 rounded-token border border-line text-muted',
-  label: 'block text-sm text-muted mb-1',
-} as const;
+// Clipboard helper (the old ui.* class strings are gone — use src/components/m3, ADR 0009).
 
 /**
  * Copy text to the clipboard. Uses the async Clipboard API when available

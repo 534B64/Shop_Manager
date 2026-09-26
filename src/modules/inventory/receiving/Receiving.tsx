@@ -13,9 +13,10 @@ import InventoryHeader from '../components/InventoryHeader';
 import ItemPicker from '../components/ItemPicker';
 import TxnTable from '../components/TxnTable';
 import { useSuppliers } from '../components/lookups';
-import { useKeyset } from '../components/useKeyset';
-import { errorText, factorOf, receiptCountUnits } from '../logic';
+import { factorOf, receiptCountUnits } from '../logic';
 import type { Txn } from '../types';
+import { errorText } from '../../../lib/errorText';
+import { useKeysetMore } from '../../../lib/keysetPaging';
 
 interface Result { before: InventoryItem; after: InventoryItem; added: number }
 
@@ -32,7 +33,7 @@ export default function Receiving() {
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<Result | null>(null);
   const manager = hasRole('manager');
-  const recent = useKeyset<Txn>(manager ? '/api/inventory/transactions' : null, { type: 'receipt' }, 10);
+  const recent = useKeysetMore<Txn>(manager ? '/api/inventory/transactions' : null, { type: 'receipt' }, 10);
 
   useEffect(() => { setSupplierId(item?.supplierId != null ? String(item.supplierId) : ''); }, [item?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   const pick = (i: InventoryItem | null) => {

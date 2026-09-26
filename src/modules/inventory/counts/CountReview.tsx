@@ -10,9 +10,10 @@ import type { InventoryItem } from '../../../lib/types';
 import { reviewCounts } from '../../../../shared/countReview';
 import { VARIANCE_REASON_CODES } from '../../../../shared/domain';
 import { useInvSettings } from '../components/lookups';
-import { costPerCountUnit, errorText, parseWhole, reasonLabel, signed } from '../logic';
+import { costPerCountUnit, parseWhole, reasonLabel, signed } from '../logic';
 import { chunks, enteredIds, submitCounts, type Draft } from './draft';
 import type { CycleCount } from '../types';
+import { errorText } from '../../../lib/errorText';
 
 const plusDays = (n: number) => new Date(Date.now() + n * 86400000).toISOString().slice(0, 10);
 

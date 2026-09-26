@@ -1,11 +1,11 @@
 import { Link, useNavigate } from 'react-router-dom';
 import { DataTable, EmptyState, type Column } from '../../../components/m3';
 import { formatCents } from '../../../lib/format';
-import { useKeyset } from '../lib/keyset';
-import KeysetPager from '../lib/KeysetPager';
+import KeysetPager from '../../../components/KeysetPager';
 import { formatWhen } from '../lib/when';
 import type { DrawerSession } from '../types';
 import OverShortBadge from './OverShortBadge';
+import { useKeyset } from '../../../lib/keysetPaging';
 
 const COLS: Column<DrawerSession>[] = [
   { key: 'id', header: 'Drawer', render: (d) => <Link className="text-primary underline" to={`/pos/drawer/${d.id}`} onClick={(e) => e.stopPropagation()}>#{d.id}</Link>, width: 'w-24' },
@@ -27,7 +27,7 @@ export default function DrawerHistory() {
         loading={list.loading} error={list.error} onRetry={list.reload}
         empty={<EmptyState title="No drawer sessions yet">Open the drawer to start the first one.</EmptyState>}
         onRowClick={(d) => nav(`/pos/drawer/${d.id}`)} />
-      <KeysetPager state={list} />
+      {(list.hasPrev || list.hasNext) && <KeysetPager paging={list} touch />}
     </div>
   );
 }

@@ -15,6 +15,17 @@ describe('cursorStack', () => {
   });
   it('does not move past the last page', () => {
     expect(cursorStack.next([null, 5], null)).toEqual([null, 5]);
+    const first = [null];
+    expect(cursorStack.next(first, null)).toBe(first);
+  });
+  it('page 1 has no cursor; the top of the stack is the page being shown', () => {
+    let s: (number | null)[] = [null];
+    expect(s[s.length - 1]).toBeNull();
+    s = cursorStack.next(cursorStack.next(s, 40), 15);
+    expect(s[s.length - 1]).toBe(15);
+    expect(s).toHaveLength(3);
+    s = cursorStack.prev(s);
+    expect(s[s.length - 1]).toBe(40);
   });
 });
 

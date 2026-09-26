@@ -170,13 +170,13 @@ export async function paymentRoutes(app: FastifyInstance) {
       .from(payments).where(and(isNull(payments.voidedAt), from ? gte(payments.createdAt, from) : undefined,
         to ? lte(payments.createdAt, to + 'T99') : undefined));
     const byMethod: Record<string, number> = {};
-    let paymentsCents = 0, refundsCents = 0;
+    let paymentsCents = 0, refundsCents = 0, paymentCount = 0;
     for (const r of rows) {
       const signed = r.kind === 'refund' ? -r.amountCents : r.amountCents;
       byMethod[r.method] = (byMethod[r.method] ?? 0) + signed;
-      if (r.kind === 'refund') refundsCents += r.amountCents; else paymentsCents += r.amountCents;
+      if (r.kind === 'refund') refundsCents += r.amountCents; else { paymentsCents += r.amountCents; paymentCount++; }
     }
-    return { from: from ?? null, to: to ?? null, count: rows.length,
+    return { from: from ?? null, to: to ?? null, count: rows.length, paymentCount,
       paymentsCents, refundsCents, netCents: paymentsCents - refundsCents, byMethod };
   });
 

@@ -1,6 +1,6 @@
-// Inventory list reads with filtering / sorting / paging in SQL (UI foundation,
-// ADR 0009). The filters mirror shared/inventoryView.ts so the Inventory page
-// can move its client-side filters to the server one-for-one.
+// Inventory list reads with filtering / sorting / grouping / paging in SQL (UI
+// foundation, ADR 0009) — the old Inventory page's client-side filters, search
+// modes, group-by and sorts, one-for-one.
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../db/index.js';
 import { categories, inventoryAdjustments, inventoryItems, locations, materials, suppliers } from '../../db/schema/index.js';

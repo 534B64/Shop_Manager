@@ -2,9 +2,9 @@ import { useState } from 'react';
 import { Button, Checkbox, Dialog, Select, TextField, showSnackbar } from '../../../components/m3';
 import { post } from '../../../lib/api';
 import { formatCents } from '../../../lib/format';
-import { errorText, isDrawerClosed } from '../lib/errors';
 import { paidNetCents } from '../returns/plan';
 import { METHOD_LABELS, type InvoiceDetail } from '../types';
+import { errorText, isDrawerClosed } from '../../../lib/errorText';
 
 /** Void = cancel the whole sale: refund what was paid, put stock back. Manager approval (the shared dialog). */
 export default function VoidDialog({ inv, open, onClose, onDone }: {

@@ -9,9 +9,9 @@ import { formatDate } from '../../../lib/format';
 import InventoryHeader from '../components/InventoryHeader';
 import CountBanner, { todayIso } from '../components/CountBanner';
 import { useUrlPaged } from '../components/useUrlPaged';
-import { errorText } from '../logic';
 import type { CycleCount } from '../types';
 import { enteredIds, loadDraft } from './draft';
+import { errorText } from '../../../lib/errorText';
 
 const STATUS = { counting: 'Counting', submitted: 'Awaiting approval', posted: 'Posted' } as const;
 

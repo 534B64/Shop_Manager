@@ -57,9 +57,6 @@ export interface DrawerView extends DrawerSession {
   openedByName: string | null; closedByName: string | null; final: boolean; zReport: ZReport;
 }
 
-/** Keyset page from the sales list endpoints. */
-export interface KeysetPage<T> { rows: T[]; nextBefore: number | null }
-
 export const METHOD_LABELS: Record<string, string> = {
   cash: 'Cash', card: 'Card', check: 'Check', credit: 'Store credit', other: 'Other',
 };

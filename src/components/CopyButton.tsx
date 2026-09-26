@@ -20,7 +20,7 @@ export default function CopyButton({ text, label = 'Copy', className = '' }: { t
         }
       }}
       title={`Copy "${text}"`}
-      className={`px-3 py-2 border border-line rounded-token text-sm hover:bg-bg ${className}`}
+      className={`state-layer inline-flex items-center h-10 px-3 border border-outline text-on-surface-variant rounded-shape-full text-label-large ${className}`}
     >
       {done ? 'Copied ✓' : label}
     </button>
