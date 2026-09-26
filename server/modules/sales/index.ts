@@ -3,4 +3,5 @@
 //   invoiceJob / invoiceIfSettled — issue a job's invoice (pickup, paid in full)
 //   liveInvoiceForJob             — "is this job locked?" (jobs edit/remove)
 export { salesRoutes } from './routes.js';
+export { salesReportRoutes } from './reports.js';
 export { invoiceJob, invoiceIfSettled, liveInvoiceForJob, SalesError } from './service.js';

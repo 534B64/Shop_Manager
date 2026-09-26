@@ -180,6 +180,17 @@ export interface ZReport {
   checks: { expectedCents: number; countedCents: number | null; overShortCents: number | null };
 }
 
+export interface SalesTotalsZ { totalCents: number; taxCents: number }
+
+/** Net sales / net tax: invoices issued − what voids cancelled − returns (the
+ *  Z-report rule; the date-range sales report uses the same one). */
+export function netSales(sales: SalesTotalsZ, voids: SalesTotalsZ, returns: SalesTotalsZ) {
+  return {
+    netSalesCents: sales.totalCents - voids.totalCents - returns.totalCents,
+    netTaxCents: sales.taxCents - voids.taxCents - returns.taxCents,
+  };
+}
+
 /** End-of-day totals for one drawer session. Voided payment rows are listed
  *  but excluded from every total and from expected cash. */
 export function buildZReport(input: ZReportInput): ZReport {
@@ -215,8 +226,7 @@ export function buildZReport(input: ZReportInput): ZReport {
   return {
     openingFloatCents: input.openingFloatCents,
     byMethod, paymentsCents, refundsCents, voidedPayments, sales, voids, returns,
-    netSalesCents: sales.totalCents - voids.totalCents - returns.totalCents,
-    netTaxCents: sales.taxCents - voids.taxCents - returns.taxCents,
+    ...netSales(sales, voids, returns),
     cash: { expectedCents: expectedCash, countedCents: input.countedCashCents,
       overShortCents: input.countedCashCents != null ? overShortCents(expectedCash, input.countedCashCents) : null },
     checks: { expectedCents: checkNet, countedCents: input.countedChecksCents,

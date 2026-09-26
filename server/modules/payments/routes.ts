@@ -1,5 +1,5 @@
 import type { FastifyInstance, FastifyReply } from 'fastify';
-import { eq, desc, isNull } from 'drizzle-orm';
+import { and, eq, desc, gte, isNull, lte } from 'drizzle-orm';
 import { db, withTx } from '../../db/index.js';
 import { payments, jobs, customers, customerCredits, drawerSessions } from '../../db/schema/index.js';
 import { parsePage, PagingError, type PageQuery } from '../../lib/paging.js';
@@ -165,9 +165,10 @@ export async function paymentRoutes(app: FastifyInstance) {
   // Date-range summary: daily/weekly/monthly/custom reports come from here.
   app.get('/api/reports/summary', async (req) => {
     const { from, to } = req.query as { from?: string; to?: string };
-    let rows = await db.select().from(payments).where(isNull(payments.voidedAt));
-    if (from) rows = rows.filter((r) => r.createdAt >= from);
-    if (to) rows = rows.filter((r) => r.createdAt <= to + 'T99');
+    // Range filter in SQL (Quick Order's "today" total and Reports call this on load).
+    const rows = await db.select({ kind: payments.kind, method: payments.method, amountCents: payments.amountCents })
+      .from(payments).where(and(isNull(payments.voidedAt), from ? gte(payments.createdAt, from) : undefined,
+        to ? lte(payments.createdAt, to + 'T99') : undefined));
     const byMethod: Record<string, number> = {};
     let paymentsCents = 0, refundsCents = 0;
     for (const r of rows) {

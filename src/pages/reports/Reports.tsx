@@ -2,6 +2,7 @@
 // summary, sales & tax from invoices, CSV exports, drawer Z-reports, and
 // inventory value. No new report formats (CPA requirements TBD).
 import { useSearchParams } from 'react-router-dom';
+import { hasRole } from '../../lib/session';
 import DateRangeFields, { type DateRange } from '../../components/DateRangeFields';
 import { monthToDate } from './logic';
 import PaymentsCard from './PaymentsCard';
@@ -31,7 +32,7 @@ export default function Reports() {
       {bad ? <p role="alert" className="text-error text-body-large">Pick a “From” date on or before the “To” date.</p> : (
         <div className="grid gap-4 lg:grid-cols-2 items-start">
           <PaymentsCard range={range} />
-          <SalesCard range={range} />
+          {hasRole('manager') && <SalesCard range={range} />}
           <ExportsCard range={range} />
           <ValuationCard />
           <DrawerCard />

@@ -9,7 +9,7 @@ import { inventoryRoutes, cycleCountRoutes, locationRoutes, categoryRoutes, supp
 import { settingsRoutes, getSetting } from './modules/settings/index.js';
 import { userRoutes } from './modules/users/index.js';
 import { auditRoutes } from './modules/audit/index.js';
-import { salesRoutes } from './modules/sales/index.js';
+import { salesRoutes, salesReportRoutes } from './modules/sales/index.js';
 
 /**
  * Build the API with all routes registered, run migrations, but do NOT listen.
@@ -53,6 +53,7 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   await app.register(supplierRoutes);
   await app.register(auditRoutes);
   await app.register(salesRoutes);
+  await app.register(salesReportRoutes);
 
   return app;
 }
