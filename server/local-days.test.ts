@@ -1,7 +1,8 @@
 // Date-only filters mean the shop's local day (server/lib/dates.ts), not the
 // UTC day: an 8 pm sale in Chicago is stored as 01:00Z the next day and must
-// still count on the day it was rung up. TZ is set before any Date is made.
-process.env.TZ = 'America/Chicago';
+// still count on the day it was rung up. vite.config.ts sets TZ for the whole
+// test run; fail loudly if that ever stops being true.
+if (process.env.TZ !== 'America/Chicago') throw new Error('tests must run with TZ=America/Chicago (see vite.config.ts)');
 
 import { beforeAll, afterAll, describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';

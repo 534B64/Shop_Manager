@@ -51,7 +51,7 @@ export default function CloseDrawerForm({ drawer, onClosed }: { drawer: DrawerVi
       <Button type="submit" touch disabled={cashC == null || checksBad}>Close drawer…</Button>
 
       <Dialog open={confirm} onClose={() => !busy && setConfirm(false)} title={`Close drawer #${drawer.id}?`} dismissOnScrim={false}
-        description="Closing freezes today’s Z-report. It can’t be reopened or changed, and cash is refused until a drawer is opened again."
+        description="Closing freezes today’s Z-report. It can’t be reopened or changed, and payments and refunds are refused until a drawer is opened again."
         actions={<>
           <Button variant="text" touch onClick={() => setConfirm(false)} disabled={busy}>Keep open</Button>
           <Button touch onClick={close} disabled={busy}>{busy ? 'Closing…' : 'Close drawer'}</Button>
