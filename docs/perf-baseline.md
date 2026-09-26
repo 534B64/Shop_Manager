@@ -182,3 +182,83 @@ for each probe:
 **No regression from the merge.** The wave 1 fixes touch write paths only (void/return/refund
 guards, one extra `SUM` over `returns` when voiding); no GET got slower. `scripts/perf-baseline.ts`
 now shows keyset pages (`{rows, nextBefore}`) as a plain row count instead of "50 of undefined".
+
+## After wave 2 merge (2026-09-26)
+
+Fresh seed (`DB_PATH=/tmp/int2-perf.db npm run db:seed:perf`) on `team/integrate2` (inventory, jobs, POS and
+admin pages on Material 3 + the checker fixes). The probe list is now **every page's real first-load URL**
+(what `src/` actually fetches, incl. the new inventory `group=` default); probes of unpaged whole-table
+endpoints no page calls any more (`/api/inventory`, `/api/balances`, `/api/payments`, `/api/inventory/usage`,
+the CSV exports, `/api/customers` without paging) were dropped. The only unpaged probes left are small
+configuration tables (materials, categories, suppliers, locations, users).
+
+**Every first-load probe is under 10 ms** (slowest: the inventory list's last page at offset 4950, 8.3 ms;
+the Orders board, 5.5 ms). Reports' sales card is one SQL call (0.6 ms) instead of walking up to 10,000
+invoices in the browser; Quick Order's "today" total is a SQL range sum (0.3 ms) instead of the newest 100 rows.
+
+Baseline against `/tmp/int2-perf.db` — median of 5 runs (after 1 warm-up), app.inject, in-process.
+
+| Endpoint | Page | Median ms | Size KB | Rows | Unpaginated | Notes |
+|---|---|---:|---:|---:|:---:|---|
+| `/api/dashboard` | Dashboard | 1.3 | 1.4 | — |  | low-stock top 20 + count in SQL |
+| `/api/jobs/due-soon?days=7&limit=6&today=2026-09-26` | Dashboard | 1.9 | 3.9 | 6 of 262 |  |  |
+| `/api/balances?limit=5` | Dashboard | 4.4 | 0.9 | 5 of 330 |  | owed, largest first, SQL |
+| `/api/jobs?limit=6&offset=0` | Quotes /quotes/new | 1.2 | 3.8 | 6 of 2942 |  | recent jobs |
+| `/api/materials` | Quotes /quotes/new | 0.7 | 4.1 | 14 | yes | config table |
+| `/api/jobs/1` | Quotes /quotes/:id | 1.3 | 0.7 | — |  | job + items + invoice + owed |
+| `/api/jobs/board?limit=20` | Orders (board) | 5.5 | 63.4 | — |  | 7 lanes × 20 + counts |
+| `/api/jobs/board?limit=20&q=decal` | Orders (board, search) | 5.8 | 35.0 | — |  |  |
+| `/api/jobs?limit=25&offset=0` | Orders (list) | 1.6 | 15.9 | 25 of 2942 |  |  |
+| `/api/jobs?limit=25&offset=0&q=zzzz-nohit` | Orders (list, no hit) | 2.4 | 0.0 | 0 of 0 |  | worst case: scans every job |
+| `/api/reports/summary?from=2026-09-26T05%3A00%3A00.000Z` | Quick Order | 0.3 | 0.1 | — |  | today total, SQL range |
+| `/api/payments?limit=12&offset=0` | Quick Order | 1.1 | 3.9 | 12 of 3577 |  |  |
+| `/api/customers?q=Walk-in&limit=10&offset=0` | Quick Order | 0.5 | 0.0 | 0 of 0 |  |  |
+| `/api/inventory?limit=8&offset=0&q=red` | Quick Order / POS | 1.7 | 3.4 | 8 of 99 |  | stock picker |
+| `/api/drawer/current` | POS /pos | 0.4 | 0.0 | — |  |  |
+| `/api/customers?q=smi&limit=10&offset=0` | POS /pos | 0.6 | 0.0 | 0 of 0 |  | customer picker |
+| `/api/invoices?limit=25` | POS /pos/invoices | 0.9 | 10.2 | 25 |  | keyset |
+| `/api/invoices?limit=25&from=2026-09-01&to=2026-09-26` | POS /pos/invoices (range) | 0.9 | 10.2 | 25 |  |  |
+| `/api/invoices/000100` | POS /pos/invoices/:n | 0.9 | 1.0 | — |  | lines + void + returns + payments |
+| `/api/returns?limit=25` | POS /pos/returns | 0.5 | 0.0 | 0 |  |  |
+| `/api/drawer?limit=20` | POS /pos/drawer | 0.6 | 6.9 | 20 |  |  |
+| `/api/drawer/1/z-report` | POS /pos/drawer/:id | 0.5 | 0.7 | — |  |  |
+| `/api/payments?limit=20&offset=0` | Payments | 1.2 | 6.5 | 20 of 3577 |  |  |
+| `/api/payments?limit=20&offset=0&q=smith` | Payments (search) | 2.7 | 0.0 | 0 of 0 |  |  |
+| `/api/balances?limit=20&offset=0` | Payments | 4.7 | 3.5 | 20 of 330 |  |  |
+| `/api/reports/summary?from=2026-09-26&to=2026-09-26` | Payments | 0.4 | 0.1 | — |  |  |
+| `/api/customers?limit=25&offset=0` | Customers | 1.5 | 5.4 | 25 of 500 |  |  |
+| `/api/customers?limit=25&offset=0&q=555` | Customers (search) | 2.0 | 5.4 | 25 of 500 |  |  |
+| `/api/customers/1` | Customers /:id | 0.7 | 4.2 | — |  |  |
+| `/api/invoices?customerId=1&limit=10` | Customers /:id | 0.6 | 2.1 | 5 |  |  |
+| `/api/inventory?limit=50&offset=0&sort=name&dir=asc&group=material` | Inventory | 3.2 | 23.3 | 50 of 5000 |  | default: grouped by material |
+| `/api/inventory?limit=50&offset=0&sort=name&dir=asc` | Inventory (no grouping) | 1.6 | 21.7 | 50 of 5000 |  |  |
+| `/api/inventory?limit=50&offset=0&q=red&match=starts&sort=name&dir=asc&group=material` | Inventory (search) | 3.0 | 24.4 | 50 of 99 |  |  |
+| `/api/inventory?limit=50&offset=0&sort=low&dir=asc&group=category` | Inventory (low first, by category) | 4.3 | 23.8 | 50 of 5000 |  |  |
+| `/api/inventory?limit=50&offset=4950&sort=name&dir=asc&group=material` | Inventory (deep page) | 8.3 | 24.1 | 50 of 5000 |  | OFFSET cost |
+| `/api/inventory/valuation` | Inventory | 1.7 | 0.5 | — |  |  |
+| `/api/cycle-counts/next` | Inventory | 0.3 | 0.2 | — |  |  |
+| `/api/categories?all=1&includeArchived=1` | Inventory | 0.3 | 1.7 | 8 | yes | config table |
+| `/api/suppliers?all=1&includeArchived=1` | Inventory | 0.3 | 1.1 | 6 | yes | config table |
+| `/api/inventory/1` | Inventory /:id | 0.5 | 0.4 | — |  |  |
+| `/api/inventory/1/transactions?limit=25` | Inventory /:id | 0.4 | 1.2 | 4 |  |  |
+| `/api/inventory/1/variances` | Inventory /:id | 0.5 | 0.0 | 0 |  |  |
+| `/api/inventory/1/cost-history` | Inventory /:id | 0.3 | 0.0 | 0 |  |  |
+| `/api/inventory/transactions?type=receipt&limit=10` | Inventory /receiving | 0.5 | 3.0 | 10 |  |  |
+| `/api/cycle-counts?limit=25&offset=0` | Inventory /counts | 0.7 | 6.2 | 25 of 105 |  |  |
+| `/api/cycle-counts/1` | Inventory /counts/:id | 0.4 | 0.3 | — |  |  |
+| `/api/inventory/transactions?limit=50` | Inventory /adjustments | 0.8 | 14.8 | 50 |  |  |
+| `/api/inventory/reorder?limit=50&offset=0` | Inventory /reorder | 1.8 | 14.0 | 50 of 308 |  |  |
+| `/api/inventory/usage?limit=50&offset=0` | Inventory /reorder (usage) | 1.6 | 6.5 | 50 of 5000 |  |  |
+| `/api/reports/summary?from=2026-09-01&to=2026-09-26` | Reports | 0.5 | 0.2 | — |  |  |
+| `/api/reports/sales?from=2026-09-01&to=2026-09-26` | Reports | 0.6 | 0.4 | — |  | SQL sums (was: walk every invoice) |
+| `/api/drawer?limit=10` | Reports | 0.5 | 3.5 | 10 |  |  |
+| `/api/audit?limit=50` | Audit | 0.3 | 0.0 | 0 |  |  |
+| `/api/approvals?limit=50` | Audit (approvals) | 0.4 | 0.0 | 0 |  |  |
+| `/api/users?all=1` | Settings /users | 0.3 | 0.2 | 3 | yes | config table |
+| `/api/materials?all=1&includeArchived=1` | Settings /materials | 0.5 | 4.1 | 14 | yes | config table |
+| `/api/locations` | Settings /locations | 0.3 | 0.1 | 1 | yes | config table |
+| `/api/settings/tax` | Settings / all | 0.3 | 0.0 | — |  |  |
+| `/api/settings/inventory` | Settings / all | 0.3 | 0.1 | — |  |  |
+
+Slowest: `/api/inventory?limit=50&offset=4950&sort=name&dir=asc&group=material` 8.3ms, `/api/jobs/board?limit=20&q=decal` 5.8ms, `/api/jobs/board?limit=20` 5.5ms, `/api/balances?limit=20&offset=0` 4.7ms, `/api/balances?limit=5` 4.4ms
+Biggest: `/api/jobs/board?limit=20` 63KB, `/api/jobs/board?limit=20&q=decal` 35KB, `/api/inventory?limit=50&offset=0&q=red&match=starts&sort=name&dir=asc&group=material` 24KB, `/api/inventory?limit=50&offset=4950&sort=name&dir=asc&group=material` 24KB, `/api/inventory?limit=50&offset=0&sort=low&dir=asc&group=category` 24KB
