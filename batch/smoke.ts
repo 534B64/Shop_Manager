@@ -1,7 +1,7 @@
 // Runtime smoke test. Boots the REAL API (server/app.ts) on a throwaway SQLite
 // file, runs migrations, listens on a test port, and exercises the key flows
 // over real HTTP — health, first-run setup + sessions (ADR 0004), the Phase 8
-// stock check, and job balance math. Prints PASS/FAIL per check and exits non-zero on any failure.
+// stock check, the cash drawer rule, and job balance + invoicing. Prints PASS/FAIL per check and exits non-zero on any failure.
 // Run via: npx tsx batch/smoke.ts   (invoked by 7-Runtime-Test.bat)
 import fs from 'node:fs';
 import os from 'node:os';
@@ -86,7 +86,14 @@ try {
   const owed = bals.find((b: any) => b.jobId === job.id)?.owedCents;
   check('GET /api/balances → owes 10000', owed === 10000);
 
-  await post('/api/payments', { clientRef: `${clientRef}-pay`, jobId: job.id, amountCents: 10000, method: 'cash' });
+  // Cash needs an open drawer (Phase 3, ADR 0007).
+  const noDrawer = await post('/api/payments', { clientRef: `${clientRef}-early`, jobId: job.id, amountCents: 100, method: 'cash' });
+  check('cash with no drawer open → 409', noDrawer.status === 409);
+  const drawer = await post('/api/drawer/open', { openingFloatCents: 10000 });
+  check('POST /api/drawer/open → 201', drawer.status === 201);
+  const payRes = await post('/api/payments', { clientRef: `${clientRef}-pay`, jobId: job.id, amountCents: 10000, method: 'cash' });
+  const pay = await json(payRes);
+  check('full cash payment → 201 + invoice 000001', payRes.status === 201 && pay.invoice?.numberDisplay === '000001', JSON.stringify(pay));
   const bals2 = await getJ('/api/balances');
   check('after full payment → drops off the owed list', !bals2.some((b: any) => b.jobId === job.id));
 } catch (err) {
