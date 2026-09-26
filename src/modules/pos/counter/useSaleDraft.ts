@@ -4,7 +4,7 @@
 import { useEffect, useState } from 'react';
 import type { CartLine } from './cart';
 import type { PickedCustomer } from '../lib/CustomerPicker';
-import { newRef } from '../lib/ref';
+import { newRef } from '../../../lib/ref';
 
 export interface SaleDraft {
   clientRef: string;

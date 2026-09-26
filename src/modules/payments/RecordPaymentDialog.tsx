@@ -4,7 +4,7 @@ import { Button, Checkbox, Dialog, TextField, showSnackbar } from '../../compone
 import { post } from '../../lib/api';
 import { formatCents } from '../../lib/format';
 import { errorText, isDrawerClosed, isNetworkError } from '../pos/lib/errors';
-import { newRef } from '../pos/lib/ref';
+import { newRef } from '../../lib/ref';
 import OpenDrawerForm from '../pos/drawer/OpenDrawerForm';
 import PaymentMethods from '../pos/counter/PaymentMethods';
 import { METHOD_LABELS } from '../pos/types';

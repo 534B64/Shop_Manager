@@ -8,7 +8,7 @@ import { formatCents } from '../../../lib/format';
 import { parseInvoiceNumber, returnLineRefund } from '../../../../shared/invoice';
 import PosHeader from '../PosHeader';
 import { errorText, isDrawerClosed, isNetworkError } from '../lib/errors';
-import { newRef } from '../lib/ref';
+import { newRef } from '../../../lib/ref';
 import PaymentMethods from '../counter/PaymentMethods';
 import { METHOD_LABELS, type InvoiceDetail, type ReturnRow } from '../types';
 import { previewReturn, toReturnLines, canRestock, type ReturnPick } from './plan';

@@ -5,6 +5,7 @@ import type { Material } from '../../../lib/types';
 import { isValidEmail, isValidPhone, parseDollarsToCents } from '../../../lib/format';
 import type { JobDetail } from '../types';
 import { effectiveRoll, type QuoteMath } from './math';
+import { newRef } from '../../../lib/ref';
 
 export interface LineDraft {
   key: string;
@@ -33,7 +34,7 @@ export interface QuoteDraft {
 export const COLOR_TAGS = ['2 color', '3 color'];
 export const colorTag = (m: number): string | null => (m >= 3 ? '3 color' : m >= 2 ? '2 color' : null);
 
-const uid = () => (typeof crypto !== 'undefined' && crypto.randomUUID ? crypto.randomUUID() : String(Math.random()));
+const uid = newRef;
 
 export const newLine = (type: string, over: Partial<LineDraft> = {}): LineDraft => ({
   key: uid(), type, title: '', materialId: null, widthIn: '', heightIn: '', qty: '1',

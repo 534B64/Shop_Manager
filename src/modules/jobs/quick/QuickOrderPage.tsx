@@ -6,6 +6,7 @@ import { Button, Card, Chip, Icon, TextField } from '../../../components/m3';
 import { get, post } from '../../../lib/api';
 import { useQuery } from '../../../lib/query';
 import { formatCents } from '../../../lib/format';
+import { newRef } from '../../../lib/ref';
 import type { Customer, InventoryItem } from '../../../lib/types';
 import CustomerSearch from '../shared/CustomerSearch';
 import { errorText, isDrawerClosed } from '../shared/errors';
@@ -13,7 +14,6 @@ import { METHODS, saleBody } from './sale';
 import StockPicker from './StockPicker';
 import TodaySales, { type PaymentRow } from './TodaySales';
 
-const newRef = () => crypto.randomUUID();
 
 export default function QuickOrderPage() {
   const payments = useQuery<PaymentRow[]>('/api/payments');
