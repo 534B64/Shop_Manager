@@ -30,7 +30,7 @@ export default function PricePanel({ draft, math, taxRate, levels, locked, set }
             onClick={() => math.suggested != null && set('finalPrice', (math.suggested / 100).toFixed(2))}>Use suggested</Button>
         )}
       </div>
-      <TextField label="Price * ($, before tax)" inputMode="decimal" value={draft.finalPrice} placeholder="45.00" disabled={locked}
+      <TextField label="Price * ($, before tax)" inputMode="decimal" value={draft.finalPrice} disabled={locked}
         className="[&_input]:text-title-large" error={priceBad ? 'Enter dollars and cents, e.g. 45 or 45.00' : null}
         supportingText={locked ? 'Locked by the invoice.' : 'The whole ticket before tax — lines are advisory.'}
         onChange={(e) => set('finalPrice', e.target.value)} />

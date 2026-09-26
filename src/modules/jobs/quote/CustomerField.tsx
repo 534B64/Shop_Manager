@@ -5,9 +5,9 @@ import { formatPhone } from '../../../lib/format';
 import CustomerSearch from '../shared/CustomerSearch';
 import { emptyCustomer, type CustomerDraft } from './draft';
 
-interface Props { customer: CustomerDraft; locked: boolean; autoFocus?: boolean; onChange: (c: CustomerDraft) => void }
+interface Props { customer: CustomerDraft; locked: boolean; autoFocus?: boolean; onChange: (c: CustomerDraft) => void; onPicked?: () => void }
 
-export default function CustomerField({ customer, locked, autoFocus, onChange }: Props) {
+export default function CustomerField({ customer, locked, autoFocus, onChange, onPicked }: Props) {
   const search = useRef<HTMLInputElement>(null);
   if (customer.id) {
     return (
@@ -32,7 +32,7 @@ export default function CustomerField({ customer, locked, autoFocus, onChange }:
         label="Customer * (name or phone)"
         supportingText={isNew ? 'No match picked — this makes a new customer.' : undefined}
         onText={(name) => onChange({ ...emptyCustomer(), name, phone: customer.phone, email: customer.email })}
-        onPick={(c) => onChange({ id: c.id, name: c.name, phone: c.phone ?? '', email: c.email ?? '', level: c.level ?? 0 })} />
+        onPick={(c) => { onChange({ id: c.id, name: c.name, phone: c.phone ?? '', email: c.email ?? '', level: c.level ?? 0 }); setTimeout(() => onPicked?.(), 0); }} />
       {isNew && (
         <div className="grid gap-2 sm:grid-cols-2">
           <TextField label="Phone *" inputMode="tel" maxLength={16} value={customer.phone} placeholder="(123) 456 - 7890"

@@ -20,6 +20,9 @@ export default function StockPicker({ item, qty, onPick, onQty }: Props) {
   const [active, setActive] = useState(0);
   const [error, setError] = useState<string | null>(null);
 
+  // A finished sale clears the item — start the next search empty.
+  useEffect(() => { if (!item) { setText(''); setRows([]); } }, [item]);
+
   useEffect(() => {
     const q = text.trim();
     if (q.length < 2 || item) { setRows([]); return; }

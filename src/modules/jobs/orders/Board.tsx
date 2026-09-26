@@ -39,7 +39,7 @@ export default function Board({ q, onSeeAll }: { q: string; onSeeAll: (status: s
           action={<Button to="/quotes/new" icon="add">New quote</Button>}>{q ? `Nothing matches “${q}”.` : 'Quotes and orders show up here.'}</EmptyState>
       )}
       <div className="grid gap-3 pb-4 items-start overflow-x-auto"
-        style={{ gridTemplateColumns: `repeat(${shown.length}, minmax(11rem, 1fr))` }}>
+        style={{ gridTemplateColumns: `repeat(${shown.length}, minmax(9.5rem, 1fr))` }}>
         {board.data && shown.map((status) => {
           const lane = lanes.find((l) => l.status === status) ?? { status, rows: [], total: 0 };
           const tone = TONES[status];
