@@ -13,3 +13,19 @@ describe('route table', () => {
     expect(route('/payments')).toBeDefined();
   });
 });
+
+describe('admin routes', () => {
+  it('old /materials and /taxonomy URLs redirect to their Settings homes', () => {
+    for (const [from, to] of [['/materials', '/settings/materials'], ['/taxonomy', '/settings/taxonomy']]) {
+      const el = route(from)!.element as { type: unknown; props: { to: string } };
+      expect(el.type).toBe(Navigate);
+      expect(el.props.to).toBe(to);
+    }
+  });
+  it('every settings sub-page, reports, audit and the customer pages are routed', () => {
+    for (const p of ['/settings', '/settings/users', '/settings/shop', '/settings/materials', '/settings/taxonomy',
+      '/settings/suppliers', '/settings/locations', '/reports', '/audit', '/customers', '/customers/:id']) {
+      expect(route(p), p).toBeDefined();
+    }
+  });
+});
