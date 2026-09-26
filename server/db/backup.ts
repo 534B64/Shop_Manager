@@ -13,8 +13,8 @@ import { createClient, type Client } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
-import { readDataset, type Dataset } from './dataset.js';
-import { serverRunningProblem } from './server-lock.js';
+import { readDataset, hasBusinessData, restoreDatasetProblem, type Dataset } from './dataset.js';
+import { serverRunningProblem, restoreInProgressProblem, holdRestoreLock } from './server-lock.js';
 
 const MIGRATIONS_FOLDER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
@@ -23,7 +23,9 @@ const MIGRATIONS_FOLDER = path.join(path.dirname(fileURLToPath(import.meta.url))
  *  between the live counts read just before and just after it. */
 export const KEY_TABLES = ['users', 'customers', 'jobs', 'job_items', 'payments', 'customer_credits',
   'materials', 'inventory_items', 'inventory_adjustments', 'inventory_balances', 'cycle_counts',
-  'cycle_count_lines', 'approvals', 'audit_log'];
+  'cycle_count_lines', 'approvals', 'audit_log',
+  // Phase 3 (ADR 0007) — all append-only.
+  'invoices', 'invoice_lines', 'invoice_voids', 'returns', 'return_lines', 'drawer_sessions', 'number_sequences'];
 
 export const DEFAULT_KEEP_DAILY = 14;
 export const DEFAULT_KEEP_WEEKLY = 8;
@@ -243,7 +245,9 @@ function appMigrationTimes(folder: string): number[] {
 /**
  * Replace the database with a backup. Order, so a failure never leaves the
  * shop without a working database:
- *   1. refuse while the server's heartbeat is fresh (server-lock.ts)
+ *   1. refuse while the server's heartbeat is fresh (server-lock.ts); then
+ *      hold a restore lock so the server refuses to start until we're done
+ *      (the heartbeat is checked once more right before step 4)
  *   2. check the backup: integrity, a Shop Manager database, not from a newer
  *      app version, not demo data over a production database
  *   3. copy it to `<db>.restoring` and run migrations on that copy (an older
@@ -262,7 +266,20 @@ export async function restoreBackup(o: {
 
   const running = serverRunningProblem(dbPath);
   if (running) throw new BackupError(running);
+  const busy = restoreInProgressProblem(dbPath);
+  if (busy) throw new BackupError(busy);
 
+  // From here to the swap the server refuses to start (restore lock).
+  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
+  const releaseRestoreLock = holdRestoreLock(dbPath);
+  try {
+    return await restoreLocked(backupFile, dbPath, folder, o.now ?? new Date());
+  } finally {
+    releaseRestoreLock();
+  }
+}
+
+async function restoreLocked(backupFile: string, dbPath: string, folder: string, now: Date): Promise<RestoreResult> {
   if (!fs.existsSync(backupFile)) throw new BackupError(`${backupFile} does not exist`);
   if (fs.existsSync(`${backupFile}-wal`)) {
     throw new BackupError(`${backupFile}-wal exists next to it, so it is a live database copy, not a finished backup. `
@@ -276,15 +293,16 @@ export async function restoreBackup(o: {
     throw new BackupError('that backup was made by a NEWER version of the app. Update the app first, then restore.');
   }
   let currentDataset: Dataset | null = null;
-  if (fs.existsSync(dbPath)) currentDataset = (await inspectDb(dbPath, { integrity: false })).dataset;
-  if (currentDataset === 'production' && b.dataset !== 'production') {
-    throw new BackupError(`the current database is PRODUCTION but the backup is ${b.dataset ? `"${b.dataset}"` : 'unlabeled'}. `
-      + 'Refusing to put non-production data in its place.');
+  let currentHasData = false;
+  if (fs.existsSync(dbPath)) {
+    const c = open(dbPath);
+    try { currentDataset = await readDataset(c); currentHasData = await hasBusinessData(c); } finally { c.close(); }
   }
+  const datasetProblem = restoreDatasetProblem({ dbPath, current: currentDataset, currentHasData, backup: b.dataset });
+  if (datasetProblem) throw new BackupError(datasetProblem);
 
   // 3. Prepare the copy. Rollback-journal mode while migrating, so the
   //    prepared file is one self-contained file (the server turns WAL on at start).
-  fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const restoring = `${dbPath}.restoring`;
   for (const s of ['', '-journal', '-wal', '-shm']) fs.rmSync(restoring + s, { force: true });
   fs.copyFileSync(backupFile, restoring);
@@ -304,8 +322,13 @@ export async function restoreBackup(o: {
       throw new BackupError(`upgrade incomplete (${after.migrations.length} of ${appTimes.length} migrations)`);
     }
 
+    // Last look before anything moves: a server that started anyway (old app
+    // version without the restore-lock check) stops the restore here.
+    const lateStart = serverRunningProblem(dbPath);
+    if (lateStart) throw new BackupError(lateStart);
+
     // 4. Current database aside, all companions together so it stays openable.
-    const aside = path.join(path.dirname(dbPath), `${baseName(dbPath)}.pre-restore-${stamp(o.now ?? new Date())}.db`);
+    const aside = path.join(path.dirname(dbPath), `${baseName(dbPath)}.pre-restore-${stamp(now)}.db`);
     for (const s of ['', '-wal', '-shm']) {
       if (!fs.existsSync(dbPath + s)) continue;
       if (fs.existsSync(aside + s)) throw new BackupError(`${aside + s} already exists — wait a second and run it again`);

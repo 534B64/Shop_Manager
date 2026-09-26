@@ -20,7 +20,8 @@ export interface SqlRunner {
  *  materials, suppliers and locations with the shop's starting data, so those
  *  don't count; any change made through the app also writes audit_log. */
 const DATA_TABLES = ['users', 'customers', 'jobs', 'payments', 'customer_credits',
-  'inventory_items', 'inventory_adjustments', 'cycle_counts', 'audit_log'];
+  'inventory_items', 'inventory_adjustments', 'cycle_counts', 'audit_log',
+  'invoices', 'invoice_lines', 'invoice_voids', 'returns', 'return_lines', 'drawer_sessions'];
 
 async function tableNames(c: SqlRunner): Promise<Set<string>> {
   const r = await c.execute("SELECT name FROM sqlite_master WHERE type = 'table'");
@@ -80,6 +81,36 @@ export function demoSeedProblem(s: { dbPath: string; dataset: Dataset | null; ha
   if (s.hasData) {
     return `${s.dbPath} already has data but no demo/production label, so it might be real. `
       + 'Refusing. Use a new file name, or move this file somewhere safe first.';
+  }
+  return null;
+}
+
+/**
+ * The restore rule (mirrors demoSeedProblem). Returns why the restore must be
+ * refused, or null.
+ *   backup production                       → allowed
+ *   current production, backup not          → refuse
+ *   backup demo/unlabeled, both demo        → allowed
+ *   backup demo/unlabeled, target dp-erp.db → refuse (the real shop database's name)
+ *   backup demo/unlabeled, current has data → refuse (could be real data)
+ *   otherwise (new/empty file, other name)  → allowed
+ */
+export function restoreDatasetProblem(s: {
+  dbPath: string; current: Dataset | null; currentHasData: boolean; backup: Dataset | null;
+}): string | null {
+  if (s.backup === 'production') return null;
+  const what = s.backup ? `"${s.backup}"` : 'unlabeled';
+  if (s.current === 'production') {
+    return `the current database is PRODUCTION but the backup is ${what}. Refusing to put non-production data in its place.`;
+  }
+  if (s.current === 'demo' && s.backup === 'demo') return null;
+  if (isProdFileName(s.dbPath)) {
+    return `${s.dbPath} is named like the real shop database (${PROD_DB_NAME}) but the backup is ${what}, not production. `
+      + 'Restore demo data into its own file (DB_PATH=./data/demo.db).';
+  }
+  if (s.currentHasData) {
+    return `the current database has data (${s.current ? `labeled "${s.current}"` : 'unlabeled'}) and the backup is ${what}. `
+      + 'Refusing to replace possibly real data with it. Restore into a new file name instead.';
   }
   return null;
 }

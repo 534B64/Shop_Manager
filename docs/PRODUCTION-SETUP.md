@@ -32,6 +32,11 @@ Safety rails:
 
 Do this after `DEPLOY.md` Steps 1–4 (container built and reachable). Takes 5 minutes.
 
+**Time zone.** The image and `docker-compose.yml` set `TZ: America/Chicago` (US Central), so the
+2 AM backup and every local date (drawer days, reports) use shop time. If the shop is somewhere
+else, change `TZ` in `docker-compose.yml` (and the `ENV TZ` line in the `Dockerfile`) before the
+first start, e.g. `America/New_York`.
+
 ### If the container has never had any data (brand-new install)
 
 1. In Container Manager, make sure the **dp-erp** container is **running**. On its first start

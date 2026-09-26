@@ -28,6 +28,7 @@ Plain-language procedure. Why it works this way: `docs/adr/0008-backups-and-data
 | Nightly backups | `dp-erp/data/backups/dp-erp-YYYY-MM-DD_HHMMSS.db` | One file each, complete on its own. These are what you restore from. |
 | Set-aside copies | `dp-erp/data/dp-erp.pre-restore-YYYY-MM-DD_HHMMSS.db` | Made by a restore: the database as it was just before. Never deleted automatically. |
 | App running marker | `dp-erp/data/dp-erp.db.server-lock` | Tiny file the app updates every 30 s so a restore knows it's running. Harmless; ignore it. |
+| Restore marker | `dp-erp/data/dp-erp.db.restore-lock` | Exists only while a restore runs; the app won't start while it's fresh. |
 
 (`dp-erp` = the folder you made in `DEPLOY.md` Step 1. Inside the container it is `/app/data`.)
 
@@ -94,7 +95,11 @@ sudo docker compose start
 ```
 
 It refuses (and changes nothing) if the app is still running, if the backup is damaged, if
-it's demo data going over the real database, or if it came from a newer version of the app.
+it's demo or unlabeled data going into `dp-erp.db` or over a database that already has data
+(only demo over demo is allowed), or if it came from a newer version of the app. While it works
+it leaves a `dp-erp.db.restore-lock` file; the app refuses to start until the restore finishes
+(a lock left by a crashed restore stops counting after 10 minutes), and the restore checks once
+more that the app is not running right before it swaps the files.
 It moves the current database aside to `dp-erp.pre-restore-<date>.db` (never deleted), puts
 the backup in place, upgrades it, and prints the row counts. It says `RESTORE OK` at the end.
 
@@ -169,7 +174,7 @@ Set in `docker-compose.yml` (defaults are baked into the image):
 | `BACKUP_DIR` | `/app/data/backups` | Where backups go. Must stay inside the `/app/data` volume. |
 | `BACKUP_KEEP_DAILY` | `14` | How many days get a kept backup. |
 | `BACKUP_KEEP_WEEKLY` | `8` | How many weeks get a kept backup. |
-| `TZ` | (UTC) | Time zone, e.g. `America/Chicago`, so 2 means 2 AM shop time. |
+| `TZ` | `America/Chicago` | Shop time zone (set in the Dockerfile and docker-compose.yml), so 2 means 2 AM shop time. Change both if the shop is elsewhere. |
 
 Commands (inside the container, or from the project folder with Node): `npm run db:backup`,
 `npm run db:restore -- <file>`. Both read `DB_PATH` (default `./data/dp-erp.db`). Rotation only

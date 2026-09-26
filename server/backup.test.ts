@@ -15,7 +15,9 @@ import {
   backupDatabase, restoreBackup, planRotation, rotateBackups, inspectDb, backupConfigFromEnv,
   nextRunAt, backupFileName, type BackupResult,
 } from './db/backup.js';
-import { holdServerLock, lockPath, serverRunningProblem } from './db/server-lock.js';
+import {
+  holdServerLock, lockPath, serverRunningProblem, holdRestoreLock, restoreLockPath, restoreInProgressProblem,
+} from './db/server-lock.js';
 import { markDataset } from './db/dataset.js';
 
 const MIGRATIONS = path.join(path.dirname(new URL(import.meta.url).pathname), 'db', 'migrations');
@@ -103,6 +105,11 @@ describe('backup', () => {
     }
     expect(copy.counts.jobs).toBe(3);
     expect(copy.migrations).toEqual(live.migrations);
+    // Verification covers the Phase 3 sales tables too.
+    for (const t of ['invoices', 'invoice_lines', 'invoice_voids', 'returns', 'return_lines', 'drawer_sessions', 'number_sequences']) {
+      expect(Object.keys(backup.counts), t).toContain(t);
+    }
+    expect(backup.counts.number_sequences).toBe(1);
   });
 
   it('refuses a database file that does not exist (never creates one)', async () => {
@@ -227,6 +234,50 @@ describe('restore', () => {
     await expect(restoreBackup({ backupFile: demo, dbPath: freshDb })).rejects.toThrow(/PRODUCTION/);
   });
 
+  it('refuses demo data into dp-erp.db or over an unlabeled database with data; demo over demo is fine', async () => {
+    const demo = path.join(root, 'demo.db');
+    // A missing dp-erp.db: demo data never goes in the real shop file name.
+    await expect(restoreBackup({ backupFile: demo, dbPath: path.join(root, 'd1', 'dp-erp.db') })).rejects.toThrow(/real shop database/);
+    // An unlabeled database with data under another name.
+    const unlabeled = path.join(root, 'd2', 'shop.db');
+    fs.mkdirSync(path.dirname(unlabeled), { recursive: true });
+    const c = createClient({ url: `file:${unlabeled}` });
+    await migrate(drizzle(c), { migrationsFolder: MIGRATIONS });
+    await c.execute({ sql: 'INSERT INTO customers (name, created_at) VALUES (?, ?)', args: ['Maybe real', '2026-09-01T00:00:00Z'] });
+    c.close();
+    const before = sha(unlabeled);
+    await expect(restoreBackup({ backupFile: demo, dbPath: unlabeled })).rejects.toThrow(/has data/);
+    expect(sha(unlabeled)).toBe(before);
+    // Demo over demo.
+    const demoTarget = path.join(root, 'd3', 'demo.db');
+    fs.mkdirSync(path.dirname(demoTarget), { recursive: true });
+    fs.copyFileSync(demo, demoTarget);
+    await expect(restoreBackup({ backupFile: demo, dbPath: demoTarget })).resolves.toMatchObject({ backupDataset: 'demo' });
+  });
+
+  it('holds a restore lock while it runs; a fresh restore lock stops the server starting and a second restore', async () => {
+    const target = path.join(root, 'locked', 'dp-erp.db');
+    fs.mkdirSync(path.dirname(target), { recursive: true });
+    expect(restoreInProgressProblem(target)).toBeNull();
+    const release = holdRestoreLock(target);
+    try {
+      expect(restoreInProgressProblem(target)).toMatch(/restore is replacing/);
+      await expect(restoreBackup({ backupFile: backup.file, dbPath: target })).rejects.toThrow(/restore is replacing/);
+    } finally {
+      release();
+    }
+    expect(restoreInProgressProblem(target)).toBeNull();
+    // A crashed restore's lock goes stale.
+    fs.writeFileSync(restoreLockPath(target), '{}');
+    const old = new Date(Date.now() - 11 * 60_000);
+    fs.utimesSync(restoreLockPath(target), old, old);
+    expect(restoreInProgressProblem(target)).toBeNull();
+    fs.rmSync(restoreLockPath(target));
+    // A real restore leaves no lock behind.
+    await restoreBackup({ backupFile: backup.file, dbPath: target });
+    expect(fs.existsSync(restoreLockPath(target))).toBe(false);
+  });
+
   it('refuses a backup made by a newer app version', async () => {
     const newer = path.join(root, 'newer.db');
     fs.copyFileSync(backup.file, newer);
@@ -253,7 +304,9 @@ describe('restore', () => {
     await c.execute({ sql: 'INSERT INTO inventory_items (name, count, created_at) VALUES (?, ?, ?)', args: ['Old blank', 7, '2026-07-01T00:00:00Z'] });
     c.close();
 
-    const target = path.join(root, 'upgraded', 'dp-erp.db');
+    // Unlabeled (pre-label era) → only into a file not named dp-erp.db (restore rule).
+    await expect(restoreBackup({ backupFile: oldDb, dbPath: path.join(root, 'upgraded', 'dp-erp.db') })).rejects.toThrow(/real shop database/);
+    const target = path.join(root, 'upgraded', 'shop.db');
     const r = await restoreBackup({ backupFile: oldDb, dbPath: target });
     expect(r.migrationsBefore).toBe(13);
     const fullJournal = JSON.parse(fs.readFileSync(path.join(MIGRATIONS, 'meta', '_journal.json'), 'utf8'));

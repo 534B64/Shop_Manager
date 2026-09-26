@@ -1,3 +1,4 @@
+import './restore-guard.js'; // must stay first: refuses to start during a restore
 import fastifyStatic from '@fastify/static';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';

@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@libsql/client';
-import { demoSeedProblem, prodInitProblem, type FileState } from './db/dataset.js';
+import { demoSeedProblem, prodInitProblem, restoreDatasetProblem, type FileState } from './db/dataset.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const TSX = path.join(here, '..', 'node_modules', 'tsx', 'dist', 'cli.mjs');
@@ -44,6 +44,32 @@ describe('demo seed rule', () => {
   });
   it('seeds a new or empty unlabeled file with another name', () => {
     expect(at('./data/demo.db', null, false)).toBeNull();
+  });
+});
+
+describe('restore rule', () => {
+  type D = 'demo' | 'production' | null;
+  const at = (dbPath: string, current: D, currentHasData: boolean, backup: D) =>
+    restoreDatasetProblem({ dbPath, current, currentHasData, backup });
+  it('a production backup can go anywhere', () => {
+    expect(at('/data/dp-erp.db', 'production', true, 'production')).toBeNull();
+    expect(at('/data/dp-erp.db', null, false, 'production')).toBeNull();
+  });
+  it('never puts demo or unlabeled data over production', () => {
+    expect(at('/data/shop.db', 'production', true, 'demo')).toMatch(/PRODUCTION/);
+    expect(at('/data/shop.db', 'production', false, null)).toMatch(/PRODUCTION/);
+  });
+  it('refuses a non-production backup into dp-erp.db or over a database with data, unless both are demo', () => {
+    expect(at('/data/dp-erp.db', null, false, 'demo')).toMatch(/real shop database/);
+    expect(at('/data/dp-erp.db', null, false, null)).toMatch(/real shop database/);
+    expect(at('/data/shop.db', null, true, 'demo')).toMatch(/has data/);
+    expect(at('/data/demo.db', 'demo', true, null)).toMatch(/has data/);
+    expect(at('/data/demo.db', 'demo', true, 'demo')).toBeNull();
+    expect(at('/data/dp-erp.db', 'demo', true, 'demo')).toBeNull();
+  });
+  it('allows a non-production backup into a new or empty file with another name', () => {
+    expect(at('/tmp/restore-test.db', null, false, 'demo')).toBeNull();
+    expect(at('/tmp/restore-test.db', null, false, null)).toBeNull();
   });
 });
 

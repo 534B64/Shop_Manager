@@ -16,9 +16,9 @@ services:
       BACKUP_DIR: /app/data/backups
       BACKUP_KEEP_DAILY: '14'
       BACKUP_KEEP_WEEKLY: '8'
-      # Uncomment and set your time zone so "2" means 2 AM shop time
-      # (without it the container uses UTC — backups still run, just at a different hour).
-      # TZ: America/Chicago
+      # Shop time zone, so "2" means 2 AM shop time and dates/Z-reports use local days.
+      # Change it if the shop is not on US Central time (e.g. America/New_York).
+      TZ: America/Chicago
     # Passes "docker stop" on to the app so it shuts down cleanly.
     init: true
     restart: unless-stopped

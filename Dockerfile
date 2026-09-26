@@ -23,6 +23,9 @@ ENV DB_PATH=/app/data/dp-erp.db
 # Nightly verified backup inside the app (ADR 0008, docs/BACKUP.md) — on the same volume.
 ENV BACKUP_DIR=/app/data/backups
 ENV BACKUP_HOUR=2
+# Shop time zone (backup hour, local dates). The owner should change this if the
+# shop is not on US Central time; docker-compose.yml sets it too.
+ENV TZ=America/Chicago
 
 EXPOSE 3000
 CMD ["npx", "tsx", "server/index.ts"]

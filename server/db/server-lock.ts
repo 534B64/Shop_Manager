@@ -29,6 +29,29 @@ export function serverRunningProblem(dbPath: string, now = Date.now()): string |
     + `Stop the app first. If it is really stopped, wait ${Math.ceil(STALE_MS / 1000)} seconds and try again.`;
 }
 
+// The other direction: a restore in progress writes `<db>.restore-lock`, and the
+// server refuses to start while it is fresh — so nothing opens the database in
+// the gap between the restore's checks and its rename. A crashed restore's
+// lock goes stale on its own after RESTORE_STALE_MS.
+export const RESTORE_STALE_MS = 10 * 60_000;
+export const restoreLockPath = (dbPath: string) => `${dbPath}.restore-lock`;
+
+/** Why the server (or a second restore) must not open the database now, or null. */
+export function restoreInProgressProblem(dbPath: string, now = Date.now()): string | null {
+  const stat = fs.statSync(restoreLockPath(dbPath), { throwIfNoEntry: false });
+  if (!stat || now - stat.mtimeMs >= RESTORE_STALE_MS) return null;
+  return `a restore is replacing ${dbPath} right now (started ${Math.round((now - stat.mtimeMs) / 1000)} s ago). `
+    + `Wait for it to finish, then start the app. If no restore is running, wait ${RESTORE_STALE_MS / 60_000} minutes `
+    + `or remove ${restoreLockPath(dbPath)}.`;
+}
+
+/** Mark a restore in progress. Returns a release function. */
+export function holdRestoreLock(dbPath: string): () => void {
+  const file = restoreLockPath(dbPath);
+  fs.writeFileSync(file, JSON.stringify({ host: os.hostname(), pid: process.pid, startedAt: new Date().toISOString() }));
+  return () => { try { fs.unlinkSync(file); } catch { /* already gone */ } };
+}
+
 /** Take the lock for this server process. Returns a release function. */
 export function holdServerLock(dbPath: string): { release: () => void; replacedLive: boolean } {
   const file = lockPath(dbPath);
