@@ -1,13 +1,14 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, desc, sql, and, isNull } from 'drizzle-orm';
+import { eq, desc, sql, isNull } from 'drizzle-orm';
 import { db, withTx } from '../../db/index.js';
-import { payments, jobs, customers, customerCredits } from '../../db/schema/index.js';
-import { creditBalanceCents } from './service.js';
-import { recordSale } from '../inventory/index.js';
+import { payments, jobs, customers, customerCredits, invoices, invoiceVoids, salesReturns } from '../../db/schema/index.js';
+import { recordPayment, PaymentError } from './service.js';
+import { invoiceIfSettled, SalesError } from '../sales/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
 import { audit } from '../audit/index.js';
+import { TENDER_METHODS } from '../../../shared/invoice.js';
 
-export const PAYMENT_METHODS = ['cash', 'check', 'card', 'credit', 'other'] as const;
+export const PAYMENT_METHODS = TENDER_METHODS;
 
 function csvEscape(v: unknown): string {
   const s = v == null ? '' : String(v);
@@ -22,6 +23,8 @@ export async function paymentRoutes(app: FastifyInstance) {
         id: payments.id, jobId: payments.jobId, amountCents: payments.amountCents,
         method: payments.method, kind: payments.kind, voidedAt: payments.voidedAt,
         voidReason: payments.voidReason, note: payments.note, createdAt: payments.createdAt,
+        drawerSessionId: payments.drawerSessionId, tenderedCents: payments.tenderedCents,
+        changeCents: payments.changeCents, returnId: payments.returnId, invoiceVoidId: payments.invoiceVoidId,
         jobTitle: jobs.title, customerName: customers.name,
       })
       .from(payments)
@@ -33,6 +36,9 @@ export async function paymentRoutes(app: FastifyInstance) {
 
   // kind 'payment' reduces what's owed; kind 'refund' is money handed back.
   // method 'credit' draws down / restores the customer's credit balance.
+  // Cash needs an open drawer (409); cash payments may send tenderedCents
+  // (change is recorded). A payment that settles the job issues its invoice
+  // in the same transaction (Phase 3, ADR 0007) — returned as `invoice`.
   app.post('/api/payments', {
     schema: {
       body: {
@@ -46,56 +52,46 @@ export async function paymentRoutes(app: FastifyInstance) {
           method: { type: 'string', enum: [...PAYMENT_METHODS] },
           kind: { type: 'string', enum: ['payment', 'refund'] },
           note: { type: 'string', maxLength: 500 },
+          tenderedCents: { type: 'integer', minimum: 0 },
           approval: approvalSchema, // refunds only (ADR 0004)
         },
       },
     },
   }, async (req, reply) => {
-    const { approval: _approval, ...body } = req.body as { clientRef: string; jobId: number; amountCents: number; method: string; kind?: 'payment' | 'refund'; note?: string; approval?: unknown };
+    const body = req.body as { clientRef: string; jobId: number; amountCents: number; method: string; kind?: 'payment' | 'refund'; note?: string; tenderedCents?: number };
     const kind = body.kind ?? 'payment';
-    // One transaction: the credit-ledger row, the payment, and the audit row
-    // commit together; the balance check reads through the same transaction.
-    return withTx(async (tx) => {
-      const [existing] = await tx.select().from(payments).where(eq(payments.clientRef, body.clientRef));
-      if (existing) return existing;
-      const [job] = await tx.select().from(jobs).where(eq(jobs.id, body.jobId));
-      if (!job) return reply.code(400).send({ error: 'Unknown job' });
-      if (body.method === 'credit') {
-        if (!job.customerId) return reply.code(400).send({ error: 'Job has no customer — credit needs an account' });
-        if (kind === 'payment') {
-          const bal = await creditBalanceCents(job.customerId, tx);
-          if (bal < body.amountCents) {
-            return reply.code(409).send({ error: `Customer credit is ${(bal / 100).toFixed(2)} — not enough` });
-          }
+    // One transaction: the credit-ledger row, the payment, the invoice (when
+    // this settles the job), and the audit rows commit together.
+    try {
+      return await withTx(async (tx) => {
+        const [existing] = await tx.select().from(payments).where(eq(payments.clientRef, body.clientRef));
+        if (existing) return existing;
+        const [job] = await tx.select().from(jobs).where(eq(jobs.id, body.jobId));
+        if (!job) return reply.code(400).send({ error: 'Unknown job' });
+        if (body.method === 'credit' && !job.customerId) return reply.code(400).send({ error: 'Job has no customer — credit needs an account' });
+        // Money going back out needs a manager (after the idempotency return, so a
+        // wifi retry of an approved refund never asks twice or logs twice).
+        let approvalId: number | null = null;
+        if (kind === 'refund') {
+          const approver = await requireApproval(req, reply, { action: 'payment.refund', entity: 'job', entityId: job.id,
+            reason: body.note ?? null, details: { amountCents: body.amountCents, method: body.method, clientRef: body.clientRef } });
+          if (!approver) return reply;
+          approvalId = approver.approvalId;
         }
+        const row = await recordPayment(tx, req, { clientRef: body.clientRef, jobId: job.id, customerId: job.customerId,
+          amountCents: body.amountCents, method: body.method, kind, note: body.note ?? null,
+          tenderedCents: body.tenderedCents ?? null, approvalId });
+        const invoice = kind === 'payment' ? await invoiceIfSettled(tx, req, job.id) : null;
+        reply.code(201);
+        return invoice ? { ...row, invoice: { id: invoice.id, number: invoice.number,
+          numberDisplay: String(invoice.number).padStart(6, '0'), totalCents: invoice.totalCents } } : row;
+      });
+    } catch (e) {
+      if (e instanceof PaymentError || e instanceof SalesError) {
+        return reply.code(e.status).send({ error: e.message, ...(e instanceof PaymentError && e.code ? { code: e.code } : {}) });
       }
-      // Money going back out needs a manager (after the idempotency return, so a
-      // wifi retry of an approved refund never asks twice or logs twice).
-      let approvalId: number | null = null;
-      if (kind === 'refund') {
-        const approver = await requireApproval(req, reply, { action: 'payment.refund', entity: 'job', entityId: job.id,
-          reason: body.note ?? null, details: { amountCents: body.amountCents, method: body.method, clientRef: body.clientRef } });
-        if (!approver) return reply;
-        approvalId = approver.approvalId;
-      }
-
-      let creditDeltaCents: number | null = null;
-      if (body.method === 'credit' && job.customerId) {
-        // Payment by credit draws the account down; refund-to-credit stores
-        // value on the account instead of handing back cash.
-        creditDeltaCents = kind === 'payment' ? -body.amountCents : body.amountCents;
-        await tx.insert(customerCredits).values({
-          customerId: job.customerId, deltaCents: creditDeltaCents,
-          note: kind === 'payment' ? `Applied to job #${job.id}` : `Refund from job #${job.id}`,
-        });
-      }
-
-      const [row] = await tx.insert(payments).values({ ...body, kind, createdBy: req.user!.name }).returning();
-      await audit(tx, req, { action: kind === 'refund' ? 'payment.refund' : 'payment.create', entity: 'payment',
-        entityId: row.id, after: { ...row, creditDeltaCents, customerId: job.customerId }, approvalId });
-      reply.code(201);
-      return row;
-    });
+      throw e;
+    }
   });
 
   // Void = mistake correction. Row stays, balance ignores it, credit is restored.
@@ -133,7 +129,8 @@ export async function paymentRoutes(app: FastifyInstance) {
     });
   });
 
-  // Balance = final price − (live payments) + (live refunds).
+  // Balance = after-tax total − returned goods − live payments + live refunds.
+  // Removed (archived) jobs — incl. sales cancelled by an invoice void — are left out.
   app.get('/api/balances', async () => {
     const live = db.$with('live').as(
       db.select({
@@ -141,18 +138,27 @@ export async function paymentRoutes(app: FastifyInstance) {
         net: sql<number>`sum(case when ${payments.kind} = 'refund' then -${payments.amountCents} else ${payments.amountCents} end)`.as('net'),
       }).from(payments).where(isNull(payments.voidedAt)).groupBy(payments.jobId),
     );
-    const rows = await db.with(live)
+    const ret = db.$with('ret').as(
+      db.select({ jobId: invoices.jobId, total: sql<number>`sum(${salesReturns.totalCents})`.as('total') })
+        .from(salesReturns).innerJoin(invoices, eq(salesReturns.invoiceId, invoices.id))
+        .leftJoin(invoiceVoids, eq(invoiceVoids.invoiceId, invoices.id))
+        .where(isNull(invoiceVoids.id)).groupBy(invoices.jobId),
+    );
+    const rows = await db.with(live, ret)
       .select({
         jobId: jobs.id, title: jobs.title, status: jobs.status,
         customerName: customers.name, finalPriceCents: sql<number | null>`coalesce(${jobs.totalCents}, ${jobs.finalPriceCents})`,
         paidCents: sql<number>`coalesce(${live.net}, 0)`,
+        returnedCents: sql<number>`coalesce(${ret.total}, 0)`,
       })
       .from(jobs)
       .leftJoin(live, eq(live.jobId, jobs.id))
-      .leftJoin(customers, eq(jobs.customerId, customers.id));
+      .leftJoin(ret, eq(ret.jobId, jobs.id))
+      .leftJoin(customers, eq(jobs.customerId, customers.id))
+      .where(isNull(jobs.deletedAt));
     return rows
-      .filter((r) => (r.finalPriceCents ?? 0) - r.paidCents > 0)
-      .map((r) => ({ ...r, owedCents: (r.finalPriceCents ?? 0) - r.paidCents }));
+      .map((r) => ({ ...r, owedCents: (r.finalPriceCents ?? 0) - r.returnedCents - r.paidCents }))
+      .filter((r) => r.owedCents > 0);
   });
 
   // Date-range summary: daily/weekly/monthly/custom reports come from here.
@@ -215,60 +221,5 @@ export async function paymentRoutes(app: FastifyInstance) {
     reply.header('content-type', 'text/csv').header('content-disposition', 'attachment; filename="jobs.csv"');
     return [header, ...lines].join('\n');
   });
-
-  app.post('/api/pos/sale', {
-    schema: {
-      body: {
-        type: 'object',
-        required: ['clientRef', 'title', 'amountCents', 'method'],
-        additionalProperties: false,
-        properties: {
-          clientRef: { type: 'string', minLength: 8, maxLength: 64 },
-          title: { type: 'string', minLength: 1, maxLength: 200 },
-          amountCents: { type: 'integer', minimum: 1 },
-          method: { type: 'string', enum: ['cash', 'check', 'card', 'other'] },
-          customerId: { type: 'integer' },
-          // Optional "from stock" link (2026-07-07): when the counter sale is
-          // a stocked item, deduct it from inventory. qty is in COUNT units.
-          inventoryItemId: { type: 'integer' },
-          stockQty: { type: 'integer', minimum: 1, maximum: 9999 },
-        },
-      },
-    },
-  }, async (req, reply) => {
-    const body = req.body as { clientRef: string; title: string; amountCents: number; method: string; customerId?: number; inventoryItemId?: number; stockQty?: number };
-    // One transaction: job + payment + stock deduction + audit rows commit
-    // together or not at all (ADR 0005) — never a paid job with no payment row.
-    return withTx(async (tx) => {
-      const [existing] = await tx.select().from(jobs).where(eq(jobs.clientRef, body.clientRef));
-      if (existing) return existing;
-      const [job] = await tx.insert(jobs).values({
-        clientRef: body.clientRef, type: 'retail', title: body.title,
-        status: 'picked_up', finalPriceCents: body.amountCents, totalCents: body.amountCents,
-        customerId: body.customerId ?? null, createdBy: req.user!.name,
-      }).returning();
-      await audit(tx, req, { action: 'job.create', entity: 'job', entityId: job.id, after: { ...job, source: 'pos.sale' } });
-      const [pay] = await tx.insert(payments).values({
-        clientRef: body.clientRef + ':pay', jobId: job.id,
-        amountCents: body.amountCents, method: body.method, createdBy: req.user!.name,
-      }).returning();
-      await audit(tx, req, { action: 'payment.create', entity: 'payment', entityId: pay.id, after: pay });
-      // Counter-sale deduction — the ONE tracked-sale write into inventory
-      // (weekly cycle counts reconcile everything else). Sits after the
-      // idempotency return above, so a wifi retry never deducts twice; clamps
-      // at zero and never blocks the sale on stock levels — money beats count
-      // accuracy. A DB error here rolls the whole sale back (client retries).
-      if (body.inventoryItemId != null) {
-        const sale = await recordSale({ itemId: body.inventoryItemId, qty: body.stockQty ?? 1,
-          title: body.title, jobId: job.id, createdBy: req.user!.name, userId: req.user!.id }, tx);
-        if (sale.adjustmentId != null) {
-          await audit(tx, req, { action: 'inventory.sold', entity: 'inventory_item', entityId: body.inventoryItemId,
-            before: { count: sale.countBefore }, after: { count: (sale.countBefore ?? 0) - sale.applied,
-              adjustmentId: sale.adjustmentId, jobId: job.id } });
-        }
-      }
-      reply.code(201);
-      return job;
-    });
-  });
+  // POST /api/pos/sale moved to the sales module (Phase 3, same path).
 }

@@ -35,6 +35,8 @@ export const jobs = sqliteTable('jobs', {
   finalPriceCents: integer('final_price_cents'),
   taxable: integer('taxable', { mode: 'boolean' }).notNull().default(true),
   discountPct: real('discount_pct'), // customer-level discount applied (after tax)
+  // Tax rate totalCents was computed with (Phase 3) — the invoice snapshots it.
+  taxRatePct: real('tax_rate_pct'),
   // Grand total actually charged: primary + items, tax and discount applied.
   totalCents: integer('total_cents'),
   // Soft delete ("Remove" — manager approval, ADR 0004/0005). Money rows stay for the books.

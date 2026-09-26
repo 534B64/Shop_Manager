@@ -109,3 +109,28 @@ opening balances), same script:
 **No regression.** On-hand reads still use `inventory_items.count`; the ledger only costs an
 indexed `SUM` inside the guard trigger on writes. The full-table inventory endpoints (2.1 MB for
 `/api/inventory`) remain the paging target for the UI phase.
+
+## After Phase 3 (2026-09-26)
+
+Fresh seed (`DB_PATH=/tmp/perf-3.db npm run db:seed:perf`): same jobs/payments/ledger data as
+Phase 2 (the invoice step draws no random numbers) plus **2,646 invoices** (one per settled job,
+numbered in date order through the gap-free sequence, one row at a time; lines batched) and
+**365 closed drawer sessions**. The perf seed still finishes in ~1.5 s. New probes added to
+`scripts/perf-baseline.ts` (their responses are `{rows, nextBefore}` objects, so Rows shows —):
+
+| Endpoint | After 2 ms | After 3 ms | Note |
+|---|---:|---:|---|
+| `/api/invoices?limit=50` | — | 1.2 | **new** — keyset page, void join + returned-value subquery |
+| `/api/invoices?limit=50&from=…&to=…` | — | 1.5 | **new** — `invoices(created_at)` index |
+| `/api/invoices?number=000100` | — | 0.5 | **new** — unique number index |
+| `/api/invoices/000100` | — | 0.9 | **new** — detail: lines, void, returns, payments |
+| `/api/returns?limit=50` | — | 0.5 | **new** (empty in the perf seed) |
+| `/api/drawer?limit=50` | — | 0.8 | **new** — session history |
+| `/api/drawer/1/z-report` | — | 0.5 | **new** — stored Z-report |
+| `/api/balances` | 12.9 | 16.6 | now also subtracts returned goods (one more grouped CTE) and skips archived jobs |
+| `/api/payments` | 1.1 | 1.5 | 5 more columns per row |
+| `/api/inventory` | 70.5 | 74.0 | unchanged code; run-to-run spread |
+
+**No meaningful regression.** `/api/balances` is the one endpoint that does more work (≈ +4 ms at
+3,000 jobs) and is still unpaginated — the next thing to watch as jobs grow. Writes (counter sale =
+job + invoice + lines + payment + audit in one transaction) are not in this GET-only baseline.

@@ -18,6 +18,17 @@ export async function setSetting(key: string, value: string, dbx: Db = db): Prom
   else await dbx.insert(settings).values({ key, value });
 }
 
+/** POS knobs (Phase 3, ADR 0007): a return refunding more than this needs a
+ *  manager; at or below it a cashier can do it alone. */
+export const DEFAULT_POS_SETTINGS = { refundApprovalThresholdCents: 5000 };
+
+export async function posSettings(dbx: Db = db): Promise<typeof DEFAULT_POS_SETTINGS> {
+  const raw = await getSetting('posSettings', dbx);
+  if (!raw) return { ...DEFAULT_POS_SETTINGS };
+  try { return { ...DEFAULT_POS_SETTINGS, ...JSON.parse(raw) }; }
+  catch { return { ...DEFAULT_POS_SETTINGS }; }
+}
+
 /** Sales-tax rate — the default when never configured. */
 export async function taxRatePct(dbx: Db = db): Promise<number> {
   const v = await getSetting('taxRatePct', dbx);
