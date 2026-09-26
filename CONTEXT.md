@@ -123,12 +123,54 @@ used in code, docs, or conversation, it means exactly this.
 
 ### Money
 
-- **Payment / Refund** — rows in one ledger (`kind`). Money rows are never
-  hard-deleted.
-- **Void** — marking a money row mistaken (reason required). The row stays on
-  the books.
-- **Balance** — derived, never stored: after-tax total − live payments + live
-  refunds. Overpayment warns but is allowed.
+- **Payment** — money taken from a customer toward a Job, with its tender:
+  cash, card, check, store credit, or other. Card is recorded only — the shop
+  never keeps card numbers. For cash, what was handed over and the change
+  given are recorded too. Money rows are never erased.
+- **Refund** — money handed back to a customer, in the same ledger as
+  payments. A refund made because of a void or a return points at it.
+- **Invoice** — the locked record of a sale: what was sold, at what price,
+  with what tax and discount, to whom. Made when a Job is paid in full or
+  picked up, or at once for a counter sale. Once a Job has an invoice, its
+  prices, tax, discount, customer, and lines can't be changed — a mistake is
+  fixed by voiding the invoice or taking a return, never by editing it. An
+  invoice is never changed or removed.
+- **Invoice number** — the invoice's own number, separate from the PO:
+  consecutive with no gaps and never reused (shown as `000001`). A sale that
+  fails doesn't use one up.
+- **Line tax** — sales tax worked out and kept on each invoice line at the
+  moment of sale, with the rate used; the invoice's tax is the sum of its
+  lines.
+- **Void** — two different things, always say which:
+  1. **Payment void** — marking one payment or refund row as entered by
+     mistake (reason required). The row stays on the books and stops counting.
+  2. **Invoice void** — cancelling a whole sale (manager approval, reason).
+     The invoice stays exactly as it was; a separate void record points at it,
+     what the customer paid is refunded, and any stock the sale took goes back
+     on the shelf. The order is removed, or — when kept — can be corrected and
+     invoiced again under a new number.
+- **Return** — goods coming back against an invoice (an RMA): which lines and
+  how many, never more than were sold minus what already came back. Each
+  returned line is marked **restock** (back on the shelf) or not (damaged).
+  Its value includes that line's share of tax and discount. The customer gets
+  back only what they had overpaid once the return lowers what they owe;
+  returns worth more than the shop's threshold need a manager.
+- **Price override** — saving a price different from the estimator's
+  suggestion. Always allowed (the estimator is advisory), but a manager
+  approves it and it is logged.
+- **Balance** — derived, never stored: after-tax total − returned goods − live
+  payments + live refunds. Overpayment warns but is allowed.
+- **Drawer session** — one stretch of the cash drawer's life: opened by
+  counting the starting cash (the float), closed by counting it again. All
+  cash taken or handed back happens inside an open session; without one the
+  shop can't take cash. One drawer is open at a time. Closing needs a manager.
+- **Over/short** — at drawer close, the counted cash minus what should be
+  there (float + cash taken − cash refunded). Positive is over, negative is
+  short.
+- **Z-report** — the end-of-day summary a drawer session closes into: totals
+  by tender, sales, tax, discounts, invoice voids, returns and refunds, the
+  first and last invoice numbers, and expected vs counted cash. Fixed forever
+  once the drawer is closed.
 - **Credit ledger** — per-customer store credit as signed entries; balance may
   not go negative.
 
@@ -148,7 +190,7 @@ used in code, docs, or conversation, it means exactly this.
 - **Manager approval** — a manager (or admin) entering *their own* name + PIN
   at the moment a sensitive action happens (void, refund, unpaid pickup,
   removing an order, archiving or restoring a customer, store-credit or stock
-  corrections). A manager
+  corrections, a price override, a return over the refund threshold). A manager
   acting alone approves themselves. Every approval is logged permanently with
   who asked and who approved.
 

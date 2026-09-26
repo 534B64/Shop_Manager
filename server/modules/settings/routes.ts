@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { withTx, type Db } from '../../db/index.js';
 import { DEFAULT_UNIT_TYPES } from '../../../shared/domain.js';
-import { taxRatePct, getSetting, setSetting } from './service.js';
+import { taxRatePct, getSetting, setSetting, DEFAULT_POS_SETTINGS } from './service.js';
 import { requireRole } from '../auth/index.js';
 import { audit } from '../audit/index.js';
 
@@ -82,6 +82,16 @@ export async function settingsRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
     return saveJson(req, 'inventorySettings', DEFAULT_INVENTORY, req.body as object);
+  });
+
+  // POS knobs (Phase 3): the refund amount above which a return needs a manager.
+  app.get('/api/settings/pos', async () => getJson('posSettings', DEFAULT_POS_SETTINGS));
+  app.put('/api/settings/pos', {
+    schema: { body: { type: 'object', additionalProperties: false, minProperties: 1,
+      properties: { refundApprovalThresholdCents: { type: 'integer', minimum: 0, maximum: 10_000_000 } } } },
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    return saveJson(req, 'posSettings', DEFAULT_POS_SETTINGS, req.body as object);
   });
 
   // Discount % per customer level (1–3). Level 0 never sees discounts.

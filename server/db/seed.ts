@@ -6,8 +6,9 @@
 //   Josiah — admin   — PIN 1234
 //   Amy    — manager — PIN 2222
 //   Sam    — cashier — PIN 3333
-import { db, runMigrations } from './index.js';
-import { customers, materials, jobs } from './schema/index.js';
+import { sql } from 'drizzle-orm';
+import { db, runMigrations, withTx } from './index.js';
+import { customers, materials, jobs, payments, invoices, invoiceLines } from './schema/index.js';
 import { seedDemoUsers } from './seed-users.js';
 
 await runMigrations();
@@ -57,7 +58,7 @@ const iso = (offsetDays: number) => {
   return d.toISOString().slice(0, 10);
 };
 
-await db.insert(jobs).values([
+const jobRows = await db.insert(jobs).values([
   {
     customerId: custRows[0].id,
     type: 'decal',
@@ -102,7 +103,22 @@ await db.insert(jobs).values([
     status: 'picked_up',
     finalPriceCents: 800,
   },
-]);
+]).returning();
+
+// The picked-up counter sale is sold: paid by card and invoiced (Phase 3,
+// ADR 0007) — the invoice number comes from the gap-free sequence.
+const sold = jobRows.find((j) => j.status === 'picked_up')!;
+await withTx(async (tx) => {
+  const [{ n }] = await tx.all<{ n: number }>(sql`UPDATE number_sequences SET next_value = next_value + 1
+    WHERE name = 'invoice' RETURNING next_value - 1 AS n`);
+  const [inv] = await tx.insert(invoices).values({
+    number: Number(n), jobId: sold.id, customerId: sold.customerId, customerName: 'Walk-in', title: sold.title,
+    source: 'counter_sale', taxRatePct: 8.25, subtotalCents: 800, taxCents: 0, totalCents: 800, createdBy: 'Josiah',
+  }).returning();
+  await tx.insert(invoiceLines).values({ invoiceId: inv.id, lineNo: 1, description: sold.title, qty: 1,
+    unitPriceCents: 800, subtotalCents: 800, taxable: false, taxRatePct: 0, taxCents: 0, totalCents: 800 });
+  await tx.insert(payments).values({ jobId: sold.id, amountCents: 800, method: 'card', createdBy: 'Josiah' });
+});
 
 console.log(`Seed complete: price book ensured, ${usersAdded} demo account(s) added, sample customers/jobs ensured.`);
 process.exit(0);

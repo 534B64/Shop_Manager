@@ -23,6 +23,7 @@ const S = await import('./schema/index.js');
 const { sql } = await import('drizzle-orm');
 const { seedDemoUsers } = await import('./seed-users.js');
 const { txnTypeForReason } = await import('../../shared/domain.js');
+const { buildZReport } = await import('../../shared/invoice.js');
 
 const ANCHOR = new Date('2026-09-25T17:00:00.000Z'); // fixed → repeatable data
 const DAY = 86_400_000;
@@ -198,7 +199,7 @@ await db.transaction(async (tx) => {
       type: pick(TYPES), title: `${pick(TITLES)} #${i + 1}`, tags: chance(0.3) ? 'rush,repeat' : null,
       status, quantity: int(1, 25), widthIn: int(4, 96), heightIn: int(4, 48), mainColorMult: pick([1, 1, 1, 2, 3]),
       materialId: mat.id, materialCostSnapshotCents: mat.costPerUnitCents, suggestedPriceCents: final, finalPriceCents: final,
-      totalCents: total, taxable: true, createdBy: pick(['josiah', 'amy', 'counter']),
+      totalCents: total, taxRatePct: 7, taxable: true, createdBy: pick(['josiah', 'amy', 'counter']),
       dueDate: new Date(d.getTime() + int(1, 14) * DAY).toISOString().slice(0, 10),
       deletedAt: deleted ? createdAt : null, createdAt,
     });
@@ -208,6 +209,7 @@ await db.transaction(async (tx) => {
 
   const itemRows: (typeof S.jobItems.$inferInsert)[] = [];
   const payRows: (typeof S.payments.$inferInsert)[] = [];
+  const invoiceable: { i: number; jobId: number }[] = [];
   jobIds.forEach((jobId, i) => {
     const meta = jobMeta[i];
     for (let k = int(0, 3); k > 0; k--) {
@@ -223,6 +225,7 @@ await db.transaction(async (tx) => {
     const settled = meta.status === 'picked_up' || (meta.status === 'done' && chance(0.6));
     const methods = ['cash', 'check', 'card', 'card', 'cash', 'other'];
     if (settled) {
+      invoiceable.push({ i, jobId });
       if (chance(0.3)) {
         const dep = Math.round(meta.total * 0.5);
         payRows.push({ clientRef: `perfpay-${i}-a`, jobId, amountCents: dep, method: pick(methods), createdAt: meta.createdAt });
@@ -238,6 +241,48 @@ await db.transaction(async (tx) => {
   });
   await insertBatched(tx, S.jobItems, itemRows, false);
   await insertBatched(tx, S.payments, payRows, false);
+
+  // ---------------- invoices (Phase 3, ADR 0007) ----------------
+  // Every settled job has its invoice, numbered in date order (no PRNG draws,
+  // so the rest of the data is unchanged). The gap-free trigger only accepts
+  // the number the sequence just handed out, so invoices go in one at a time
+  // inside this transaction; their lines are batched.
+  const custName = new Map(custIds.map((id, k) => [id, custs[k].name]));
+  invoiceable.sort((a, b) => (jobRows[a.i].createdAt as string).localeCompare(jobRows[b.i].createdAt as string) || a.i - b.i);
+  const lineRows: (typeof S.invoiceLines.$inferInsert)[] = [];
+  for (const { i, jobId } of invoiceable) {
+    const j = jobRows[i];
+    const sub = j.finalPriceCents as number;
+    const total = jobMeta[i].total;
+    const [{ n }] = (await tx.all(sql`UPDATE number_sequences SET next_value = next_value + 1
+      WHERE name = 'invoice' RETURNING next_value - 1 AS n`)) as { n: number }[];
+    const [inv] = await tx.insert(S.invoices).values({
+      number: Number(n), jobId, customerId: j.customerId, customerName: custName.get(j.customerId as number) ?? null,
+      jobPo: j.po, title: j.title, source: 'job', taxRatePct: 7, subtotalCents: sub, taxCents: total - sub,
+      discountPct: 0, discountCents: 0, totalCents: total, createdBy: j.createdBy, createdAt: j.createdAt,
+    }).returning({ id: S.invoices.id });
+    const qty = (j.quantity as number) || 1;
+    lineRows.push({
+      invoiceId: inv.id, lineNo: 1, description: j.title, qty, unitPriceCents: Math.round(sub / qty),
+      subtotalCents: sub, suggestedCents: j.suggestedPriceCents, taxable: true, taxRatePct: 7,
+      taxCents: total - sub, discountCents: 0, totalCents: total,
+    });
+  }
+  await insertBatched(tx, S.invoiceLines, lineRows, false);
+
+  // ---------------- drawer sessions (one closed session per day, 1 yr) ----------------
+  const [owner] = await tx.select().from(S.users).where(sql`role = 'admin'`).limit(1);
+  const drawerRows = Array.from({ length: 365 }, (_, k) => {
+    const day = new Date(ANCHOR.getTime() - (365 - k) * DAY);
+    const openedAt = new Date(day.setUTCHours(14, 0, 0, 0)).toISOString();
+    const closedAt = new Date(day.setUTCHours(23, 0, 0, 0)).toISOString();
+    const z = buildZReport({ openingFloatCents: 15000, payments: [], invoices: [], voids: [], returns: [],
+      countedCashCents: 15000, countedChecksCents: null });
+    return { registerId: 1, status: 'closed' as const, openedAt, openedBy: owner.id, openingFloatCents: 15000,
+      closedAt, closedBy: owner.id, expectedCashCents: 15000, countedCashCents: 15000, overShortCents: 0,
+      expectedChecksCents: 0, zReportJson: JSON.stringify(z) };
+  });
+  await insertBatched(tx, S.drawerSessions, drawerRows, false);
 
   // ---------------- cycle counts (weekly, 2 yrs) ----------------
   const ccRows = Array.from({ length: 104 }, (_, w) => {
@@ -289,7 +334,7 @@ await db.transaction(async (tx) => {
 
 // ---------------- summary ----------------
 const tables = ['users', 'categories', 'suppliers', 'materials', 'material_colors', 'inventory_items', 'inventory_adjustments',
-  'customers', 'jobs', 'job_items', 'payments', 'cycle_counts'];
+  'customers', 'jobs', 'job_items', 'payments', 'invoices', 'invoice_lines', 'drawer_sessions', 'cycle_counts'];
 console.log(`\nSeeded ${process.env.DB_PATH} in ${((Date.now() - t0) / 1000).toFixed(1)}s`);
 for (const t of tables) {
   const [{ c }] = (await db.all(sql.raw(`select count(*) as c from ${t}`))) as { c: number }[];

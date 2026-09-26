@@ -34,6 +34,8 @@ beforeAll(async () => {
   auth = await import('./index.js');
   orm = await import('drizzle-orm');
   admin = await createUserWithToken(app, 'admin', { name: 'Owner', pin: '1234' });
+  // Cash needs an open drawer (Phase 3, ADR 0007).
+  await app.inject({ method: 'POST', url: '/api/drawer/open', headers: admin.headers, payload: { openingFloatCents: 0 } });
   manager = await createUserWithToken(app, 'manager', { name: 'Mgr', pin: '2222' });
   cashier = await createUserWithToken(app, 'cashier', { name: 'Cash', pin: '3333' });
 });

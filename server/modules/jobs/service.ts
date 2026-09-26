@@ -18,6 +18,22 @@ export async function generatePo(dbx: Db = db): Promise<string> {
   return `${day}${String(n + 1).padStart(3, '0')}`;
 }
 
+// ---- Price override (Phase 3, ADR 0007) ----
+// A saved price that differs from the estimator's suggestion is an override:
+// still allowed (the estimator is advisory) but it needs a manager. Only a
+// change that creates or alters an override asks — re-saving an already
+// approved override untouched does not.
+export function isOverride(suggested: number | null | undefined, final: number | null | undefined): boolean {
+  return suggested != null && final != null && final !== suggested;
+}
+export function needsOverrideApproval(
+  before: { suggested: number | null; final: number | null } | null,
+  after: { suggested: number | null; final: number | null },
+): boolean {
+  if (!isOverride(after.suggested, after.final)) return false;
+  return !before || before.suggested !== after.suggested || before.final !== after.final;
+}
+
 // ---- Server-side quote-math verification (Phase 11 hardening) ----
 // The client computes the suggested total and grand total in the browser; the
 // server now recomputes both from its own settings + material rules and stores
@@ -43,7 +59,7 @@ export interface PriceCheck {
   clientTotalCents: number | null;
 }
 
-export async function verifyQuoteMath(input: VerifyInput, dbx: Db = db): Promise<{ suggestedCents: number | null; totalCents: number; priceCheck: PriceCheck }> {
+export async function verifyQuoteMath(input: VerifyInput, dbx: Db = db): Promise<{ suggestedCents: number | null; totalCents: number; taxRatePct: number; priceCheck: PriceCheck }> {
   const taxRate = await taxRatePct(dbx);
   const ids = [...new Set([input.materialId, ...(input.items ?? []).map((i) => i.materialId)]
     .filter((x): x is number => typeof x === 'number'))];
@@ -64,7 +80,7 @@ export async function verifyQuoteMath(input: VerifyInput, dbx: Db = db): Promise
     || suggestedCents === input.clientSuggestedCents;
   const totalMatch = input.clientTotalCents == null || totalCents === input.clientTotalCents;
   return {
-    suggestedCents, totalCents,
+    suggestedCents, totalCents, taxRatePct: taxRate,
     priceCheck: {
       verified: suggestedMatch && totalMatch,
       serverSuggestedCents: suggestedCents,

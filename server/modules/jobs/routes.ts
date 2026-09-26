@@ -2,13 +2,24 @@ import type { FastifyInstance } from 'fastify';
 import { eq, desc, isNull, and, or, like, sql } from 'drizzle-orm';
 import { withTx, type Db } from '../../db/index.js';
 import { jobs, customers, materials, jobItems } from '../../db/schema/index.js';
-import { paidNetCents, livePaymentCount } from '../payments/index.js';
+import { owedCents, livePaymentCount, openDrawer } from '../payments/index.js';
+import { invoiceJob, liveInvoiceForJob } from '../sales/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
 import { audit } from '../audit/index.js';
 import { JOB_TYPES, type JobStatus } from '../../../shared/domain.js';
 import { canTransition } from '../../../shared/statusFlow.js';
 import { baseQuery, liveItems } from './queries.js';
-import { generatePo, verifyQuoteMath, type PriceCheck, type VerifyItemInput } from './service.js';
+import {
+  generatePo, verifyQuoteMath, needsOverrideApproval, type PriceCheck, type VerifyItemInput,
+} from './service.js';
+
+/** Fields an invoice snapshots: once a job is invoiced they can't change
+ *  (void or return instead — ADR 0007). */
+const LOCKED_KEYS = ['finalPriceCents', 'suggestedPriceCents', 'taxable', 'discountPct', 'totalCents', 'customerId',
+  'materialId', 'widthIn', 'heightIn', 'quantity', 'mainColorMult'] as const;
+const ITEM_KEYS = ['type', 'title', 'qty', 'priceCents', 'materialId', 'widthIn', 'heightIn', 'colorMult'] as const;
+const itemSig = (items: Record<string, unknown>[]) =>
+  JSON.stringify(items.map((it) => ITEM_KEYS.map((k) => it[k] ?? (k === 'colorMult' ? 1 : null))));
 
 const createBody = {
   type: 'object',
@@ -62,6 +73,7 @@ const createBody = {
     suggestedPriceCents: { type: 'integer', minimum: 0 },
     finalPriceCents: { type: 'integer', minimum: 0 },
     notes: { type: 'string', maxLength: 2000 },
+    approval: approvalSchema, // price override (ADR 0007)
   },
 } as const;
 
@@ -149,15 +161,6 @@ export async function jobRoutes(app: FastifyInstance) {
         materialCostSnapshotCents = m.costPerUnitCents;
       }
 
-      const po = await generatePo(tx);
-
-      let customerId = body.customerId ?? null;
-      if (!customerId && body.newCustomer) {
-        const [c] = await tx.insert(customers).values(body.newCustomer).returning();
-        await audit(tx, req, { action: 'customer.create', entity: 'customer', entityId: c.id, after: c });
-        customerId = c.id;
-      }
-
       // Recompute the quote math server-side; the server's answer is what gets
       // stored. Advisory — a mismatch warns, it never blocks the save.
       const verify = await verifyQuoteMath({
@@ -169,6 +172,25 @@ export async function jobRoutes(app: FastifyInstance) {
       }, tx);
       if (!verify.priceCheck.verified) {
         req.log.warn({ clientRef: body.clientRef, priceCheck: verify.priceCheck }, 'quote math mismatch — stored server-computed values');
+      }
+      // Price override: final ≠ the estimator's suggestion → manager approval.
+      // Checked before anything is written, so a 403 leaves nothing behind.
+      const suggestedPriceCents = verify.suggestedCents ?? body.suggestedPriceCents ?? null;
+      let overrideApprovalId: number | null = null;
+      if (needsOverrideApproval(null, { suggested: suggestedPriceCents, final: body.finalPriceCents })) {
+        const approver = await requireApproval(req, reply, { action: 'price.override', entity: 'job', entityId: body.clientRef,
+          details: { title: body.title, suggestedPriceCents, finalPriceCents: body.finalPriceCents } });
+        if (!approver) return reply;
+        overrideApprovalId = approver.approvalId;
+      }
+
+      const po = await generatePo(tx);
+
+      let customerId = body.customerId ?? null;
+      if (!customerId && body.newCustomer) {
+        const [c] = await tx.insert(customers).values(body.newCustomer).returning();
+        await audit(tx, req, { action: 'customer.create', entity: 'customer', entityId: c.id, after: c });
+        customerId = c.id;
       }
 
       const [row] = await tx
@@ -186,6 +208,7 @@ export async function jobRoutes(app: FastifyInstance) {
           // Server-computed total (only when the client derived one — callers
           // that never send totalCents keep the old finalPrice-as-balance path).
           totalCents: body.totalCents != null ? verify.totalCents : null,
+          taxRatePct: body.totalCents != null ? verify.taxRatePct : null,
           title: body.title,
           status: body.status,
           useProofFlow: body.useProofFlow ?? false,
@@ -197,7 +220,7 @@ export async function jobRoutes(app: FastifyInstance) {
           rollWidthIn: body.rollWidthIn ?? null,
           materialId: body.materialId ?? null,
           materialCostSnapshotCents,
-          suggestedPriceCents: verify.suggestedCents ?? body.suggestedPriceCents ?? null,
+          suggestedPriceCents,
           finalPriceCents: body.finalPriceCents,
           notes: body.notes ?? null,
         })
@@ -207,7 +230,7 @@ export async function jobRoutes(app: FastifyInstance) {
         await tx.insert(jobItems).values(body.items.map((it) => itemRow(row.id, it)));
       }
       const created = (await jobWithItems(row.id, tx))!;
-      await audit(tx, req, { action: 'job.create', entity: 'job', entityId: row.id, after: created });
+      await audit(tx, req, { action: 'job.create', entity: 'job', entityId: row.id, after: created, approvalId: overrideApprovalId });
       reply.code(201);
       return { ...created, priceCheck: verify.priceCheck };
     });
@@ -236,8 +259,7 @@ export async function jobRoutes(app: FastifyInstance) {
       let approvalId: number | null = null;
       // No pickup without payment — unless a manager approves the override.
       if (to === 'picked_up') {
-        const paidNet = await paidNetCents(id, tx);
-        const owed = (job.totalCents ?? job.finalPriceCents ?? 0) - paidNet;
+        const owed = await owedCents(job, tx);
         if (owed > 0) {
           const { override } = req.body as { override?: boolean };
           if (!override) {
@@ -259,6 +281,11 @@ export async function jobRoutes(app: FastifyInstance) {
       await tx.update(jobs).set(patch).where(eq(jobs.id, id));
       await audit(tx, req, { action: 'job.status', entity: 'job', entityId: id,
         before: { status: job.status }, after: patch, approvalId });
+      // Picked up = sold: issue the invoice now if paying in full hasn't already.
+      if (to === 'picked_up') {
+        const drawer = await openDrawer(tx);
+        await invoiceJob(tx, req, id, drawer?.id ?? null);
+      }
       const [row] = await baseQuery(tx).where(eq(jobs.id, id)).limit(1);
       return row;
     });
@@ -277,6 +304,24 @@ export async function jobRoutes(app: FastifyInstance) {
       const [job] = await tx.select().from(jobs).where(eq(jobs.id, id));
       if (!job || job.deletedAt) return reply.code(404).send({ error: 'Job not found' });
       const before = await jobWithItems(id, tx);
+
+      // Invoiced → the money fields are locked (ADR 0007). Re-sending them
+      // unchanged is fine (the edit form sends everything); a real change is 409.
+      const invoice = await liveInvoiceForJob(id, tx);
+      if (invoice) {
+        const inputs = ['finalPriceCents', 'taxable', 'discountPct', 'customerId', 'materialId', 'widthIn', 'heightIn',
+          'quantity', 'mainColorMult'] as const;
+        const changed: string[] = inputs.filter((k) => k in b && (b[k] ?? null) !== ((job as Record<string, unknown>)[k] ?? null));
+        if (Array.isArray(b.items) && itemSig(b.items as Record<string, unknown>[]) !== itemSig(before!.items as unknown as Record<string, unknown>[])) {
+          changed.push('items');
+        }
+        if (changed.length) {
+          const num = String(invoice.number).padStart(6, '0');
+          return reply.code(409).send({ error: `This order is invoiced (#${num}) — price, tax, discount, customer and lines are locked. Void the invoice or take a return instead.`,
+            invoiceNumber: num, fields: changed });
+        }
+        for (const k of [...LOCKED_KEYS, 'items']) delete b[k];
+      }
 
       const patch: Record<string, unknown> = {};
       const allowed = ['title', 'type', 'dueDate', 'quantity', 'widthIn', 'heightIn',
@@ -314,10 +359,22 @@ export async function jobRoutes(app: FastifyInstance) {
         // Any money-relevant edit refreshes the stored after-tax total, so the
         // Orders board / balances never show a total computed from a stale price.
         patch.totalCents = verify.totalCents;
+        patch.taxRatePct = verify.taxRatePct;
         priceCheck = verify.priceCheck;
         if (!priceCheck.verified) {
           req.log.warn({ jobId: id, priceCheck }, 'quote math mismatch on edit — stored server-computed values');
         }
+      }
+      // Price override created or changed by this edit → manager approval.
+      let overrideApprovalId: number | null = null;
+      const next = { ...job, ...patch } as typeof job;
+      if (needsOverrideApproval({ suggested: job.suggestedPriceCents, final: job.finalPriceCents },
+        { suggested: next.suggestedPriceCents, final: next.finalPriceCents })) {
+        const approver = await requireApproval(req, reply, { action: 'price.override', entity: 'job', entityId: id,
+          details: { suggestedPriceCents: next.suggestedPriceCents, finalPriceCents: next.finalPriceCents,
+            previousFinalPriceCents: job.finalPriceCents } });
+        if (!approver) return reply;
+        overrideApprovalId = approver.approvalId;
       }
 
       if (Object.keys(patch).length) await tx.update(jobs).set(patch).where(eq(jobs.id, id));
@@ -328,7 +385,7 @@ export async function jobRoutes(app: FastifyInstance) {
         if (items.length) await tx.insert(jobItems).values(items.map((it) => itemRow(id, it)));
       }
       const after = (await jobWithItems(id, tx))!;
-      await audit(tx, req, { action: 'job.update', entity: 'job', entityId: id, before, after });
+      await audit(tx, req, { action: 'job.update', entity: 'job', entityId: id, before, after, approvalId: overrideApprovalId });
       return { ...after, ...(priceCheck ? { priceCheck } : {}) };
     });
   });
@@ -345,6 +402,7 @@ export async function jobRoutes(app: FastifyInstance) {
       // Removable only while no money has been taken. Once a live (non-voided)
       // payment exists, the order is corrected by voiding/refunding — never deleted.
       if ((await livePaymentCount(id, tx)) > 0) return reply.code(409).send({ error: 'This order has payments — void or refund them first, then remove.' });
+      if (await liveInvoiceForJob(id, tx)) return reply.code(409).send({ error: 'This order is invoiced — void the invoice instead.' });
       const approver = await requireApproval(req, reply, { action: 'job.delete', entity: 'job', entityId: id,
         details: { po: job.po, title: job.title } });
       if (!approver) return reply;
