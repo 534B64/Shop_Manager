@@ -12,11 +12,18 @@ const Quotes = lazy(() => import('./modules/jobs/Quotes'));
 const Orders = lazy(() => import('./modules/jobs/Orders'));
 const QuickOrder = lazy(() => import('./modules/jobs/QuickOrder'));
 const Payments = lazy(() => import('./modules/payments/Pos'));
-const Customers = lazy(() => import('./modules/customers/Customers'));
+const CustomerList = lazy(() => import('./modules/customers/CustomerList'));
+const CustomerDetail = lazy(() => import('./modules/customers/CustomerDetail'));
 const Inventory = lazy(() => import('./modules/inventory/Inventory'));
-const Materials = lazy(() => import('./modules/materials/Materials'));
-const Taxonomy = lazy(() => import('./modules/inventory/Taxonomy'));
-const Settings = lazy(() => import('./pages/Settings'));
+const Account = lazy(() => import('./pages/settings/account/Account'));
+const Users = lazy(() => import('./pages/settings/users/Users'));
+const Shop = lazy(() => import('./pages/settings/shop/Shop'));
+const Materials = lazy(() => import('./pages/settings/materials/Materials'));
+const Taxonomy = lazy(() => import('./pages/settings/taxonomy/Taxonomy'));
+const Suppliers = lazy(() => import('./pages/settings/suppliers/Suppliers'));
+const Locations = lazy(() => import('./pages/settings/locations/Locations'));
+const Reports = lazy(() => import('./pages/reports/Reports'));
+const Audit = lazy(() => import('./pages/audit/Audit'));
 const ComingSoon = lazy(() => import('./pages/ComingSoon'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
@@ -74,18 +81,20 @@ const DEFS: Def[] = [
   { path: '/orders', element: <Orders /> },
   { path: '/quick', element: <QuickOrder /> },
 
-  { path: '/customers', element: <Customers /> },
-  { path: '/customers/:id', element: <Customers /> },
+  { path: '/customers', element: <CustomerList /> },
+  { path: '/customers/:id', element: <CustomerDetail /> },
 
-  { path: '/reports', element: soon('Reports', 'Sales totals and CSV exports live on the Payments page for now.', [{ to: '/payments', label: 'Open Payments' }]) },
+  { path: '/reports', element: <Reports /> },
 
   // Settings & admin
-  { path: '/settings', element: <Settings /> },
-  { path: '/settings/users', element: <Settings />, min: 'admin' },
+  { path: '/settings', element: <Account /> },
+  { path: '/settings/users', element: <Users />, min: 'admin' },
+  { path: '/settings/shop', element: <Shop />, min: 'admin' },
   { path: '/settings/materials', element: <Materials />, min: 'admin' },
   { path: '/settings/taxonomy', element: <Taxonomy />, min: 'manager' },
-  { path: '/settings/suppliers', element: <Taxonomy />, min: 'manager' },
-  { path: '/audit', element: soon('Audit log', 'A viewer for the audit log is coming. Admins can export it today via /api/audit.csv.'), min: 'admin' },
+  { path: '/settings/suppliers', element: <Suppliers />, min: 'manager' },
+  { path: '/settings/locations', element: <Locations />, min: 'admin' },
+  { path: '/audit', element: <Audit />, min: 'admin' },
 
   // Old URLs → new homes, so bookmarks survive.
   { path: '/materials', element: <Navigate to="/settings/materials" replace /> },

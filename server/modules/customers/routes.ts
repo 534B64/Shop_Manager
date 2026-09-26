@@ -5,6 +5,8 @@ import { customers, jobs, customerCredits } from '../../db/schema/index.js';
 import { creditBalanceCents } from '../payments/index.js';
 import { requireRole, requireApproval, approvalSchema } from '../auth/index.js';
 import { audit } from '../audit/index.js';
+import { parsePage, PagingError } from '../../lib/paging.js';
+import { customerPage, emailOk } from './list.js';
 
 const approvalOnlyBody = { body: { type: ['object', 'null'], additionalProperties: false,
   properties: { approval: approvalSchema } } } as const;
@@ -12,7 +14,16 @@ const approvalOnlyBody = { body: { type: ['object', 'null'], additionalPropertie
 export async function customerRoutes(app: FastifyInstance) {
   // List with last-purchase date; client flags accounts idle > 30 days.
   // Archived customers are hidden unless ?includeArchived=1 (ADR 0005).
-  app.get('/api/customers', async (req) => {
+  // Paged ({ rows, total, limit, offset }) when limit/offset is sent — the
+  // Customers page; pickers keep the old bare-array answer.
+  app.get('/api/customers', async (req, reply) => {
+    try {
+      const page = parsePage(req.query as Record<string, unknown>);
+      if (page) return await customerPage(req.query as Record<string, unknown>, page);
+    } catch (e) {
+      if (!(e instanceof PagingError)) throw e;
+      return reply.code(400).send({ error: 'bad_paging', message: e.message });
+    }
     const { q: rawQ, includeArchived } = req.query as { q?: string; includeArchived?: string };
     const q = rawQ?.trim();
     const last = db.$with('last').as(
@@ -71,10 +82,8 @@ export async function customerRoutes(app: FastifyInstance) {
     const body = req.body as { name: string; email?: string };
     // Email is required for new customers (2026-07-02). Sole exemption: the
     // generic "Walk-in" counter record Quick Order auto-creates.
-    if (body.name.trim() !== 'Walk-in') {
-      if (!body.email || !/^\S+@\S+\.\S+$/.test(body.email)) {
-        return reply.code(400).send({ error: 'An email address is required for new customers.' });
-      }
+    if (!emailOk(body.name, body.email)) {
+      return reply.code(400).send({ error: 'An email address is required for new customers.' });
     }
     return withTx(async (tx) => {
       const [row] = await tx.insert(customers).values(body).returning();
@@ -97,6 +106,12 @@ export async function customerRoutes(app: FastifyInstance) {
     return withTx(async (tx) => {
       const [before] = await tx.select().from(customers).where(eq(customers.id, id));
       if (!before) return reply.code(404).send({ error: 'Customer not found' });
+      // An edit touching name or email can't leave the email blank or invalid
+      // (Walk-in excepted). Older customers without one can still edit phone/notes.
+      const b = req.body as { name?: string; email?: string };
+      if ((b.name !== undefined || b.email !== undefined) && !emailOk(b.name ?? before.name, b.email ?? before.email)) {
+        return reply.code(400).send({ error: 'An email address is required (only Walk-in may go without).' });
+      }
       const [row] = await tx.update(customers).set(req.body as object).where(eq(customers.id, id)).returning();
       await audit(tx, req, { action: 'customer.update', entity: 'customer', entityId: id, before, after: row });
       return row;

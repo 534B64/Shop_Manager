@@ -7,6 +7,8 @@ import {
   activeAdminCount, hashPin,
 } from './service.js';
 import { audit } from '../audit/index.js';
+import { requireRole } from './service.js';
+import { listApprovals, parseApprovalQuery } from './approvals.js';
 
 export const PIN_PATTERN = '^[0-9]{4,12}$';
 
@@ -78,4 +80,10 @@ export async function authRoutes(app: FastifyInstance) {
   });
 
   app.get('/api/auth/me', async (req) => ({ user: req.user }));
+
+  // Who approved what (admin). ?action=&entity=&entityId=&userId=&from=&to=&limit=(≤200)&before=<id>
+  app.get('/api/approvals', async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    return listApprovals(parseApprovalQuery(req.query as Record<string, string | undefined>));
+  });
 }
