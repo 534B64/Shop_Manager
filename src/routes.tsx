@@ -11,7 +11,15 @@ const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
 const Quotes = lazy(() => import('./modules/jobs/Quotes'));
 const Orders = lazy(() => import('./modules/jobs/Orders'));
 const QuickOrder = lazy(() => import('./modules/jobs/QuickOrder'));
-const Payments = lazy(() => import('./modules/payments/Pos'));
+const Payments = lazy(() => import('./modules/payments/PaymentsPage'));
+const PosCounter = lazy(() => import('./modules/pos/counter/CounterPage'));
+const PosDrawer = lazy(() => import('./modules/pos/drawer/DrawerPage'));
+const PosZReport = lazy(() => import('./modules/pos/drawer/ZReportPage'));
+const PosInvoices = lazy(() => import('./modules/pos/invoices/InvoicesPage'));
+const PosInvoice = lazy(() => import('./modules/pos/invoices/InvoiceDetailPage'));
+const PosReturns = lazy(() => import('./modules/pos/returns/ReturnsPage'));
+const PosNewReturn = lazy(() => import('./modules/pos/returns/NewReturnPage'));
+const PosReturn = lazy(() => import('./modules/pos/returns/ReturnDetailPage'));
 const Customers = lazy(() => import('./modules/customers/Customers'));
 const Inventory = lazy(() => import('./modules/inventory/Inventory'));
 const Materials = lazy(() => import('./modules/materials/Materials'));
@@ -26,8 +34,7 @@ export const NAV: (NavItem & { min?: Role })[] = [
   { to: '/quotes', label: 'Quotes', icon: 'quote' },
   { to: '/orders', label: 'Orders', icon: 'orders' },
   { to: '/quick', label: 'Quick Order', icon: 'bolt' },
-  // Points at the placeholder until the counter page takes over /pos.
-  { to: '/pos/counter', label: 'POS', icon: 'cart' },
+  { to: '/pos', label: 'POS', icon: 'cart' },
   { to: '/payments', label: 'Payments', icon: 'payments' },
   { to: '/customers', label: 'Customers', icon: 'people' },
   { to: '/inventory', label: 'Inventory', icon: 'inventory' },
@@ -39,7 +46,6 @@ export const NAV: (NavItem & { min?: Role })[] = [
 const gate = (min: Role | undefined, el: ReactElement) => (min ? <RoleGate min={min}>{el}</RoleGate> : el);
 const soon = (title: string, blurb: string, links?: { to: string; label: string }[]) =>
   <ComingSoon title={title} blurb={blurb} links={links} />;
-const posLinks = [{ to: '/quick', label: 'Quick Order (counter sale today)' }, { to: '/payments', label: 'Payments' }];
 
 interface Def { path: string; element: ReactElement; min?: Role }
 
@@ -55,16 +61,16 @@ const DEFS: Def[] = [
   { path: '/inventory/reorder', element: <Inventory /> },
   { path: '/inventory/:id', element: <Inventory /> },
 
-  // POS — filled in from the POS backend by a later builder.
-  // /pos was the Payments page for years: it goes there until the counter page
-  // exists. The POS builder moves the counter page from /pos/counter to /pos
-  // and removes this redirect.
-  { path: '/pos', element: <Navigate to="/payments" replace /> },
-  { path: '/pos/counter', element: soon('Counter sale', 'The new point-of-sale screen is on its way. Until then, ring up counter sales in Quick Order and record payments in Payments.', posLinks) },
-  { path: '/pos/invoices', element: soon('Invoices', 'Invoice list — coming with the POS.', posLinks) },
-  { path: '/pos/invoices/:number', element: soon('Invoice', 'Invoice detail — coming with the POS.', posLinks) },
-  { path: '/pos/returns/new', element: soon('New return', 'Returns — coming with the POS. Refunds are recorded in Payments for now.', posLinks) },
-  { path: '/pos/drawer', element: soon('Cash drawer', 'Drawer open/close and counts — coming with the POS.', posLinks) },
+  // POS (ADR 0007): counter sale, cash drawer + Z-reports, invoices, returns.
+  { path: '/pos', element: <PosCounter /> },
+  { path: '/pos/counter', element: <Navigate to="/pos" replace /> },
+  { path: '/pos/drawer', element: <PosDrawer /> },
+  { path: '/pos/drawer/:id', element: <PosZReport /> },
+  { path: '/pos/invoices', element: <PosInvoices /> },
+  { path: '/pos/invoices/:number', element: <PosInvoice /> },
+  { path: '/pos/returns', element: <PosReturns /> },
+  { path: '/pos/returns/new', element: <PosNewReturn /> },
+  { path: '/pos/returns/:id', element: <PosReturn /> },
   { path: '/payments', element: <Payments /> },
 
   // Jobs
