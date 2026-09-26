@@ -256,7 +256,8 @@ describe('restore', () => {
     const target = path.join(root, 'upgraded', 'dp-erp.db');
     const r = await restoreBackup({ backupFile: oldDb, dbPath: target });
     expect(r.migrationsBefore).toBe(13);
-    expect(r.migrationsAfter).toBe(journal.entries.length + 3);
+    const fullJournal = JSON.parse(fs.readFileSync(path.join(MIGRATIONS, 'meta', '_journal.json'), 'utf8'));
+    expect(r.migrationsAfter).toBe(fullJournal.entries.length);
     expect(await rows(target, 'SELECT name FROM customers')).toEqual([{ name: 'Old Co' }]);
     // Migration 0015 gave the old item an opening ledger row matching its count.
     expect(await rows(target, 'SELECT count(*) AS n, sum(delta) AS s FROM inventory_adjustments')).toEqual([{ n: 1, s: 7 }]);
