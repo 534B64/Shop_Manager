@@ -11,7 +11,15 @@ const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
 const QuotePage = lazy(() => import('./modules/jobs/quote/QuotePage'));
 const OrdersPage = lazy(() => import('./modules/jobs/orders/OrdersPage'));
 const QuickOrderPage = lazy(() => import('./modules/jobs/quick/QuickOrderPage'));
-const Payments = lazy(() => import('./modules/payments/Pos'));
+const Payments = lazy(() => import('./modules/payments/PaymentsPage'));
+const PosCounter = lazy(() => import('./modules/pos/counter/CounterPage'));
+const PosDrawer = lazy(() => import('./modules/pos/drawer/DrawerPage'));
+const PosZReport = lazy(() => import('./modules/pos/drawer/ZReportPage'));
+const PosInvoices = lazy(() => import('./modules/pos/invoices/InvoicesPage'));
+const PosInvoice = lazy(() => import('./modules/pos/invoices/InvoiceDetailPage'));
+const PosReturns = lazy(() => import('./modules/pos/returns/ReturnsPage'));
+const PosNewReturn = lazy(() => import('./modules/pos/returns/NewReturnPage'));
+const PosReturn = lazy(() => import('./modules/pos/returns/ReturnDetailPage'));
 const CustomerList = lazy(() => import('./modules/customers/CustomerList'));
 const CustomerDetail = lazy(() => import('./modules/customers/CustomerDetail'));
 const InventoryList = lazy(() => import('./modules/inventory/list/InventoryList'));
@@ -30,7 +38,6 @@ const Suppliers = lazy(() => import('./pages/settings/suppliers/Suppliers'));
 const Locations = lazy(() => import('./pages/settings/locations/Locations'));
 const Reports = lazy(() => import('./pages/reports/Reports'));
 const Audit = lazy(() => import('./pages/audit/Audit'));
-const ComingSoon = lazy(() => import('./pages/ComingSoon'));
 const NotFound = lazy(() => import('./pages/NotFound'));
 
 /** Top-level sections, in rail order. `min` hides the item below that role. */
@@ -39,8 +46,7 @@ export const NAV: (NavItem & { min?: Role })[] = [
   { to: '/quotes', label: 'Quotes', icon: 'quote' },
   { to: '/orders', label: 'Orders', icon: 'orders' },
   { to: '/quick', label: 'Quick Order', icon: 'bolt' },
-  // Points at the placeholder until the counter page takes over /pos.
-  { to: '/pos/counter', label: 'POS', icon: 'cart' },
+  { to: '/pos', label: 'POS', icon: 'cart' },
   { to: '/payments', label: 'Payments', icon: 'payments' },
   { to: '/customers', label: 'Customers', icon: 'people' },
   { to: '/inventory', label: 'Inventory', icon: 'inventory' },
@@ -50,9 +56,6 @@ export const NAV: (NavItem & { min?: Role })[] = [
 ];
 
 const gate = (min: Role | undefined, el: ReactElement) => (min ? <RoleGate min={min}>{el}</RoleGate> : el);
-const soon = (title: string, blurb: string, links?: { to: string; label: string }[]) =>
-  <ComingSoon title={title} blurb={blurb} links={links} />;
-const posLinks = [{ to: '/quick', label: 'Quick Order (counter sale today)' }, { to: '/payments', label: 'Payments' }];
 
 interface Def { path: string; element: ReactElement; min?: Role }
 
@@ -68,16 +71,16 @@ const DEFS: Def[] = [
   { path: '/inventory/reorder', element: <Reorder /> },
   { path: '/inventory/:id', element: <InventoryItem /> },
 
-  // POS — filled in from the POS backend by a later builder.
-  // /pos was the Payments page for years: it goes there until the counter page
-  // exists. The POS builder moves the counter page from /pos/counter to /pos
-  // and removes this redirect.
-  { path: '/pos', element: <Navigate to="/payments" replace /> },
-  { path: '/pos/counter', element: soon('Counter sale', 'The new point-of-sale screen is on its way. Until then, ring up counter sales in Quick Order and record payments in Payments.', posLinks) },
-  { path: '/pos/invoices', element: soon('Invoices', 'Invoice list — coming with the POS.', posLinks) },
-  { path: '/pos/invoices/:number', element: soon('Invoice', 'Invoice detail — coming with the POS.', posLinks) },
-  { path: '/pos/returns/new', element: soon('New return', 'Returns — coming with the POS. Refunds are recorded in Payments for now.', posLinks) },
-  { path: '/pos/drawer', element: soon('Cash drawer', 'Drawer open/close and counts — coming with the POS.', posLinks) },
+  // POS (ADR 0007): counter sale, cash drawer + Z-reports, invoices, returns.
+  { path: '/pos', element: <PosCounter /> },
+  { path: '/pos/counter', element: <Navigate to="/pos" replace /> },
+  { path: '/pos/drawer', element: <PosDrawer /> },
+  { path: '/pos/drawer/:id', element: <PosZReport /> },
+  { path: '/pos/invoices', element: <PosInvoices /> },
+  { path: '/pos/invoices/:number', element: <PosInvoice /> },
+  { path: '/pos/returns', element: <PosReturns /> },
+  { path: '/pos/returns/new', element: <PosNewReturn /> },
+  { path: '/pos/returns/:id', element: <PosReturn /> },
   { path: '/payments', element: <Payments /> },
 
   // Jobs

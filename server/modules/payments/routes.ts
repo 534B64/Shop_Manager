@@ -1,8 +1,9 @@
-import type { FastifyInstance } from 'fastify';
-import { eq, desc, sql, isNull, and } from 'drizzle-orm';
-import { parsePage, PagingError } from '../../lib/paging.js';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { eq, desc, isNull } from 'drizzle-orm';
 import { db, withTx } from '../../db/index.js';
-import { payments, jobs, customers, customerCredits, invoices, invoiceVoids, salesReturns, drawerSessions } from '../../db/schema/index.js';
+import { payments, jobs, customers, customerCredits, drawerSessions } from '../../db/schema/index.js';
+import { parsePage, PagingError, type PageQuery } from '../../lib/paging.js';
+import { paymentPage, paymentColumns, balances } from './lists.js';
 import { recordPayment, paidNetCents, PaymentError } from './service.js';
 import { invoiceIfSettled, SalesError } from '../sales/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
@@ -16,22 +17,26 @@ function csvEscape(v: unknown): string {
   return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
 }
 
+/** The page asked for, null when unpaged, undefined after a 400 was sent. */
+function pagedOr400(q: Record<string, unknown>, reply: FastifyReply): PageQuery | null | undefined {
+  try { return parsePage(q); } catch (e) {
+    if (!(e instanceof PagingError)) throw e;
+    reply.code(400).send({ error: 'bad_paging', message: e.message });
+    return undefined;
+  }
+}
+
 export async function paymentRoutes(app: FastifyInstance) {
-  app.get('/api/payments', async (req) => {
-    const { jobId } = req.query as { jobId?: string };
-    const q = db
-      .select({
-        id: payments.id, jobId: payments.jobId, amountCents: payments.amountCents,
-        method: payments.method, kind: payments.kind, voidedAt: payments.voidedAt,
-        voidReason: payments.voidReason, note: payments.note, createdAt: payments.createdAt,
-        drawerSessionId: payments.drawerSessionId, tenderedCents: payments.tenderedCents,
-        changeCents: payments.changeCents, returnId: payments.returnId, invoiceVoidId: payments.invoiceVoidId,
-        jobTitle: jobs.title, customerName: customers.name,
-      })
-      .from(payments)
+  // Newest 100 (old shape), or paged {rows,total,limit,offset} with limit/offset (+ q).
+  app.get('/api/payments', async (req, reply) => {
+    const query = req.query as { jobId?: string } & Record<string, unknown>;
+    const page = pagedOr400(query, reply);
+    if (page === undefined) return reply;
+    if (page) return paymentPage(query, page);
+    const q = db.select(paymentColumns).from(payments)
       .leftJoin(jobs, eq(payments.jobId, jobs.id))
       .leftJoin(customers, eq(jobs.customerId, customers.id));
-    if (jobId) return q.where(eq(payments.jobId, Number(jobId))).orderBy(desc(payments.createdAt));
+    if (query.jobId) return q.where(eq(payments.jobId, Number(query.jobId))).orderBy(desc(payments.createdAt));
     return q.orderBy(desc(payments.createdAt)).limit(100);
   });
 
@@ -149,55 +154,12 @@ export async function paymentRoutes(app: FastifyInstance) {
 
   // Balance = after-tax total − returned goods − live payments + live refunds.
   // Removed (archived) jobs — incl. sales cancelled by an invoice void — are left out.
-  // With ?limit= (and optional offset) it answers one page, largest balance
-  // first, plus the count and the total owed — all in SQL (the dashboard).
+  // Paged (+ q, largest first, with totalOwedCents) when limit/offset is sent.
   app.get('/api/balances', async (req, reply) => {
-    let page;
-    try { page = parsePage(req.query as Record<string, unknown>); } catch (e) {
-      if (e instanceof PagingError) return reply.code(400).send({ error: 'bad_paging', message: e.message });
-      throw e;
-    }
-    const live = db.$with('live').as(
-      db.select({
-        jobId: payments.jobId,
-        net: sql<number>`sum(case when ${payments.kind} = 'refund' then -${payments.amountCents} else ${payments.amountCents} end)`.as('net'),
-      }).from(payments).where(isNull(payments.voidedAt)).groupBy(payments.jobId),
-    );
-    const ret = db.$with('ret').as(
-      db.select({ jobId: invoices.jobId, total: sql<number>`sum(${salesReturns.totalCents})`.as('total') })
-        .from(salesReturns).innerJoin(invoices, eq(salesReturns.invoiceId, invoices.id))
-        .leftJoin(invoiceVoids, eq(invoiceVoids.invoiceId, invoices.id))
-        .where(isNull(invoiceVoids.id)).groupBy(invoices.jobId),
-    );
-    if (page) {
-      const owed = sql<number>`coalesce(${jobs.totalCents}, ${jobs.finalPriceCents}, 0) - coalesce(${ret.total}, 0) - coalesce(${live.net}, 0)`;
-      const from = () => db.with(live, ret);
-      const where = and(isNull(jobs.deletedAt), sql`${owed} > 0`);
-      const rows = await from()
-        .select({ jobId: jobs.id, title: jobs.title, status: jobs.status, customerName: customers.name, owedCents: owed })
-        .from(jobs).leftJoin(live, eq(live.jobId, jobs.id)).leftJoin(ret, eq(ret.jobId, jobs.id))
-        .leftJoin(customers, eq(jobs.customerId, customers.id))
-        .where(where).orderBy(desc(owed), jobs.id).limit(page.limit).offset(page.offset);
-      const [agg] = await from()
-        .select({ n: sql<number>`count(*)`, sum: sql<number>`coalesce(sum(${owed}), 0)` })
-        .from(jobs).leftJoin(live, eq(live.jobId, jobs.id)).leftJoin(ret, eq(ret.jobId, jobs.id)).where(where);
-      return { rows, total: agg.n, totalOwedCents: agg.sum, ...page };
-    }
-    const rows = await db.with(live, ret)
-      .select({
-        jobId: jobs.id, title: jobs.title, status: jobs.status,
-        customerName: customers.name, finalPriceCents: sql<number | null>`coalesce(${jobs.totalCents}, ${jobs.finalPriceCents})`,
-        paidCents: sql<number>`coalesce(${live.net}, 0)`,
-        returnedCents: sql<number>`coalesce(${ret.total}, 0)`,
-      })
-      .from(jobs)
-      .leftJoin(live, eq(live.jobId, jobs.id))
-      .leftJoin(ret, eq(ret.jobId, jobs.id))
-      .leftJoin(customers, eq(jobs.customerId, customers.id))
-      .where(isNull(jobs.deletedAt));
-    return rows
-      .map((r) => ({ ...r, owedCents: (r.finalPriceCents ?? 0) - r.returnedCents - r.paidCents }))
-      .filter((r) => r.owedCents > 0);
+    const query = req.query as Record<string, unknown>;
+    const page = pagedOr400(query, reply);
+    if (page === undefined) return reply;
+    return balances(query, page);
   });
 
   // Date-range summary: daily/weekly/monthly/custom reports come from here.
