@@ -58,7 +58,8 @@ export default function DataTable<T>({
           <tbody>
             {rows.map((r) => (
               <tr key={rowKey(r)} onClick={onRowClick ? () => onRowClick(r) : undefined}
-                className={cx('border-b border-outline-variant last:border-b-0', onRowClick && 'state-layer cursor-pointer')}>
+                // No `state-layer` on a <tr>: its ::before box renders as an extra cell and shifts the row.
+                className={cx('border-b border-outline-variant last:border-b-0', onRowClick && 'cursor-pointer hover:bg-on-surface/[0.08]')}>
                 {columns.map((c) => (
                   <td key={c.key} className={cx('h-12 px-4 py-2 text-on-surface', align(c.align), narrow(c))}>
                     {c.render ? c.render(r) : String((r as Record<string, unknown>)[c.key] ?? '')}

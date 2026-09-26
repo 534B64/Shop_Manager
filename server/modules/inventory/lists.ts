@@ -1,9 +1,10 @@
 // Inventory list reads with filtering / sorting / paging in SQL (UI foundation,
 // ADR 0009). The filters mirror shared/inventoryView.ts so the Inventory page
 // can move its client-side filters to the server one-for-one.
-import { and, asc, desc, eq, isNotNull, isNull, lte, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { inventoryItems, suppliers } from '../../db/schema/index.js';
+import { inventoryAdjustments, inventoryItems, locations, suppliers } from '../../db/schema/index.js';
+import { TXN_TYPES } from '../../../shared/domain.js';
 import { daysUntilStockout, urgencyCompare } from '../../../shared/reorder.js';
 import { likePattern, parseDir, parseSort, type Page, type PageQuery } from '../../lib/paging.js';
 
@@ -16,14 +17,31 @@ const int = (v: unknown) => {
   return v !== undefined && v !== '' && Number.isInteger(n) ? n : null;
 };
 
-/** WHERE for the item filters: q, kind, materialId, color, widthIn, categoryId, supplierId, stock/low. */
+/** LIKE pattern for `q` by match mode: contains (default), starts, ends, exact. */
+function searchPattern(search: string, match: unknown): string {
+  const p = likePattern(search);
+  if (match === 'starts') return p.slice(1);
+  if (match === 'ends') return p.slice(0, -1);
+  if (match === 'exact') return p.slice(1, -1);
+  return p;
+}
+
+/** `ids=1,2,3` → up to 200 ids (an empty list matches nothing); null when absent. */
+function idList(v: unknown): number[] | null {
+  if (typeof v !== 'string' || !v.trim()) return null;
+  return v.split(',').map(Number).filter((n) => Number.isInteger(n) && n > 0).slice(0, 200);
+}
+
+/** WHERE for the item filters: q (+ match), ids, kind, materialId, color, widthIn, categoryId, supplierId, stock/low. */
 export function itemFilters(q: Q): SQL[] {
   const conds: SQL[] = [eq(I.active, true)];
   const search = str(q.q);
   if (search) {
-    const p = likePattern(search);
+    const p = searchPattern(search, q.match);
     conds.push(or(...[I.name, I.color, I.vendor].map((c) => sql`${c} LIKE ${p} ESCAPE '\\'`))!);
   }
+  const ids = idList(q.ids);
+  if (ids) conds.push(ids.length ? inArray(I.id, ids) : sql`0`);
   if (q.kind === 'roll') conds.push(isNotNull(I.materialId));
   if (q.kind === 'other') conds.push(isNull(I.materialId));
   const mat = int(q.materialId);
@@ -129,4 +147,34 @@ export async function lowStockSummary(show = 20) {
   const rows = await db.select({ id: I.id, name: I.name, count: I.count, threshold: I.lowStockThreshold })
     .from(I).where(where).orderBy(...URGENCY).limit(show);
   return { lowStock: rows, lowStockCount: await total(where) };
+}
+
+const A = inventoryAdjustments;
+const day = (v: unknown) => (typeof v === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(v) ? v : null);
+
+/**
+ * GET /api/inventory/transactions — the ledger across items, newest first,
+ * keyset-paged on id (?before=<id>&limit=<n ≤ 200>, default 50). Filters:
+ * type (txn type), itemId, from / to (yyyy-mm-dd, inclusive, UTC dates).
+ */
+export async function transactionPage(q: Q) {
+  const limit = Math.min(Math.max(int(q.limit) ?? 50, 1), 200);
+  const conds: SQL[] = [];
+  const before = int(q.before);
+  if (before != null) conds.push(lt(A.id, before));
+  const type = str(q.type);
+  if (type && (TXN_TYPES as readonly string[]).includes(type)) conds.push(eq(A.txnType, type));
+  const item = int(q.itemId);
+  if (item != null) conds.push(eq(A.itemId, item));
+  const from = day(q.from), to = day(q.to);
+  if (from) conds.push(gte(A.createdAt, from));
+  if (to) conds.push(sql`${A.createdAt} < date(${to}, '+1 day')`);
+  const rows = await db.select({
+    id: A.id, itemId: A.itemId, itemName: I.name, delta: A.delta, txnType: A.txnType, reason: A.reason,
+    note: A.note, createdBy: A.createdBy, createdAt: A.createdAt, locationId: A.locationId,
+    locationName: locations.name, unitCostCents: A.unitCostCents, countUnit: I.countUnit,
+    sourceType: A.sourceType, sourceId: A.sourceId,
+  }).from(A).innerJoin(I, eq(A.itemId, I.id)).leftJoin(locations, eq(A.locationId, locations.id))
+    .where(conds.length ? and(...conds) : undefined).orderBy(desc(A.id)).limit(limit);
+  return { rows, nextBefore: rows.length === limit ? rows[rows.length - 1].id : null };
 }

@@ -14,7 +14,13 @@ const QuickOrder = lazy(() => import('./modules/jobs/QuickOrder'));
 const Payments = lazy(() => import('./modules/payments/Pos'));
 const CustomerList = lazy(() => import('./modules/customers/CustomerList'));
 const CustomerDetail = lazy(() => import('./modules/customers/CustomerDetail'));
-const Inventory = lazy(() => import('./modules/inventory/Inventory'));
+const InventoryList = lazy(() => import('./modules/inventory/list/InventoryList'));
+const InventoryItem = lazy(() => import('./modules/inventory/item/ItemDetail'));
+const Receiving = lazy(() => import('./modules/inventory/receiving/Receiving'));
+const Counts = lazy(() => import('./modules/inventory/counts/Counts'));
+const CountSession = lazy(() => import('./modules/inventory/counts/CountSession'));
+const Adjustments = lazy(() => import('./modules/inventory/adjustments/Adjustments'));
+const Reorder = lazy(() => import('./modules/inventory/reorder/Reorder'));
 const Account = lazy(() => import('./pages/settings/account/Account'));
 const Users = lazy(() => import('./pages/settings/users/Users'));
 const Shop = lazy(() => import('./pages/settings/shop/Shop'));
@@ -53,14 +59,14 @@ interface Def { path: string; element: ReactElement; min?: Role }
 const DEFS: Def[] = [
   { path: '/', element: <Dashboard /> },
 
-  // Inventory — one page today; sub-routes let page builders split it without breaking links.
-  { path: '/inventory', element: <Inventory /> },
-  { path: '/inventory/receiving', element: <Inventory /> },
-  { path: '/inventory/counts', element: <Inventory /> },
-  { path: '/inventory/counts/:id', element: <Inventory /> },
-  { path: '/inventory/adjustments', element: <Inventory /> },
-  { path: '/inventory/reorder', element: <Inventory /> },
-  { path: '/inventory/:id', element: <Inventory /> },
+  // Inventory — one page per workflow (src/modules/inventory/*).
+  { path: '/inventory', element: <InventoryList /> },
+  { path: '/inventory/receiving', element: <Receiving /> },
+  { path: '/inventory/counts', element: <Counts /> },
+  { path: '/inventory/counts/:id', element: <CountSession /> },
+  { path: '/inventory/adjustments', element: <Adjustments />, min: 'manager' },
+  { path: '/inventory/reorder', element: <Reorder /> },
+  { path: '/inventory/:id', element: <InventoryItem /> },
 
   // POS — filled in from the POS backend by a later builder.
   // /pos was the Payments page for years: it goes there until the counter page
