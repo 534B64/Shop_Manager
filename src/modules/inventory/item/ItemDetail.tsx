@@ -86,7 +86,7 @@ export default function ItemDetail() {
         <Stat label="Days left">{days != null ? `~${Math.floor(days)}` : '—'}</Stat>
       </Card>
 
-      <div className="grid gap-4 lg:grid-cols-[3fr_2fr] mb-4">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[3fr_2fr] mb-4">
         <ItemFieldsCard item={item} onSaved={q.setData} categories={cats} suppliers={sups} units={units}
           bufferDays={settings.reorderBufferDays} />
         <div className="flex flex-col gap-4">

@@ -8,6 +8,7 @@ export default function GroupHeader({ label, closed, counts, onToggle }: {
 }) {
   return (
     <button type="button" onClick={onToggle} aria-expanded={!closed}
+      aria-label={`${label}${counts ? `, ${counts.count} item${counts.count === 1 ? '' : 's'}` : ''}`}
       className="state-layer w-full min-h-12 flex items-center gap-2 px-4 text-left text-on-surface">
       <Icon name={closed ? 'chevronRight' : 'dropDown'} />
       <span className="text-title-small flex-1">{label}</span>

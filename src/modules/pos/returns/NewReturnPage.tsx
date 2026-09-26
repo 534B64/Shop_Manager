@@ -76,7 +76,7 @@ export default function NewReturnPage() {
           {!number && <EmptyState icon="search" title="Which invoice?">Enter the number from the receipt, or start from the invoice’s page.</EmptyState>}
           {inv && inv.status === 'voided' && <EmptyState icon="warning" title={`Invoice ${inv.numberDisplay} is voided`}>Nothing left to return.</EmptyState>}
           {inv && inv.status === 'issued' && preview && (
-            <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_380px] items-start">
+            <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_380px] items-start">
               <Card variant="outlined" aria-labelledby="lines-title">
                 <CardHeader id="lines-title" title={`Invoice ${inv.numberDisplay}`} subtitle={`${inv.customerName ?? 'Walk-in'} · ${formatCents(inv.totalCents)}`} />
                 <ul>

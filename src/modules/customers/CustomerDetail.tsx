@@ -35,7 +35,7 @@ export default function CustomerDetail() {
   return (
     <div>
       <div className="mb-2 -ml-3">{back}</div>
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)] items-start">
         <ProfileCard customer={c} onChanged={q.reload} />
         <CreditCard customer={c} onChanged={q.reload} />
         <JobsCard jobs={c.jobs} onPrint={() => setPrinting(true)} />

@@ -63,7 +63,7 @@ export default function QuoteEditor({ job, initial, onSaved }: Props) {
     <form onSubmit={(e) => e.preventDefault()} onKeyDown={onKeyDown} noValidate>
       {job?.invoice && <InvoiceBanner number={job.invoice.number} />}
       {refs.error && <p role="alert" className="text-error mb-3">Couldn’t load materials: {refs.error} <button type="button" className="underline" onClick={refs.reload}>Retry</button></p>}
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_22rem] items-start">
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_22rem] items-start">
         <div className="flex flex-col gap-4 min-w-0">
           <JobSection draft={draft} locked={locked} autoFocus={!job} set={set}
             proofEditable={!job || job.status === 'quote'} />

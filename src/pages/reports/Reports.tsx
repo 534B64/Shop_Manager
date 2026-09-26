@@ -30,7 +30,7 @@ export default function Reports() {
         <DateRangeFields value={range} onChange={setRange} />
       </div>
       {bad ? <p role="alert" className="text-error text-body-large">Pick a “From” date on or before the “To” date.</p> : (
-        <div className="grid gap-4 lg:grid-cols-2 items-start">
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2 items-start">
           <PaymentsCard range={range} />
           {hasRole('manager') && <SalesCard range={range} />}
           <ExportsCard range={range} />

@@ -81,7 +81,7 @@ export default function CounterPage() {
         <Button variant="text" touch onClick={() => { setDraft(newDraft()); showSnackbar('Sale cleared'); }}>Clear sale</Button>)} />
       <DrawerStatusBar drawer={drawer} loading={drawerQ.loading} error={drawerQ.error} onRetry={drawerQ.reload} />
 
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_400px] items-start">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[minmax(0,1fr)_400px] items-start">
         <Card variant="outlined" aria-labelledby="cart-title">
           <CardHeader id="cart-title" title="Items" subtitle={draft.cart.length ? `${draft.cart.length} line${draft.cart.length === 1 ? '' : 's'}` : undefined} />
           <AddItem onStock={(it) => addLine((c) => C.addStockLine(c, it, false))}

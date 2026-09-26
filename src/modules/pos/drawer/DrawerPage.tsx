@@ -34,7 +34,7 @@ export default function DrawerPage() {
       )}
 
       {d && (
-        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_380px] items-start mb-6">
+        <div className="grid grid-cols-1 gap-4 xl:grid-cols-[minmax(0,1fr)_380px] items-start mb-6">
           <Card variant="outlined" aria-labelledby="live-title">
             <CardHeader id="live-title" title={`Drawer #${d.id} — open`}
               subtitle={`Opened ${formatWhen(d.openedAt)} by ${d.openedByName ?? '—'} · float ${formatCents(d.openingFloatCents)}${d.openNote ? ` · “${d.openNote}”` : ''}`}

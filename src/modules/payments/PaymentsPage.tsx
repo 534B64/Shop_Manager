@@ -30,7 +30,7 @@ export default function PaymentsPage() {
         <Button variant="outlined" touch to="/pos">Counter sale</Button>
       </div>
 
-      <div className="grid gap-4 lg:grid-cols-[1fr_2fr] mb-6">
+      <div className="grid grid-cols-1 gap-4 lg:grid-cols-[1fr_2fr] mb-6">
         <TodayCard version={version} />
         <ReportsCard version={version} />
       </div>

@@ -36,7 +36,7 @@ export default function LineRow({ line, index, materials, addons, material, sugg
         {onRemove && !locked && <IconButton icon="close" label={`Remove line ${n}`} onClick={onRemove} />}
       </div>
       {!main && (
-        <div className="grid gap-2 sm:grid-cols-[11rem_minmax(0,1fr)] mb-2">
+        <div className="grid grid-cols-1 gap-2 sm:grid-cols-[11rem_minmax(0,1fr)] mb-2">
           <Select label="Type" value={line.type} disabled={locked} onChange={(e) => onChange({ type: e.target.value })}>
             {JOB_TYPES.map((t) => <option key={t} value={t}>{JOB_TYPE_LABELS[t]}</option>)}
           </Select>

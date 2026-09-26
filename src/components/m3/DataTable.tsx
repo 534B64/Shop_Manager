@@ -50,7 +50,7 @@ export default function DataTable<T>({
   return (
     <div className={cx('rounded-shape-medium border border-outline-variant bg-surface overflow-hidden', className)}>
       <div className="h-1">{loading && <LinearProgress label={`Loading ${label}`} />}</div>
-      <div className="overflow-x-auto">
+      <div className="relative overflow-x-auto">
         <table className="w-full border-collapse text-body-medium" aria-busy={loading || undefined}>
           <caption className="sr-only">{label}</caption>
           <thead>
