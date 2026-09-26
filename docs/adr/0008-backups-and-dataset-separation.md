@@ -96,11 +96,17 @@ a NAS that was off at 2 AM. The npm script stays for manual and extra backups.
    leaves a lock forever); SQLite exclusive locking (in WAL mode an idle server
    holds no lock that reliably blocks another connection). A crash leaves the
    file behind but its heartbeat goes stale on its own. Compose gets
-   `init: true` so `docker stop` reaches the app.
+   `init: true` so `docker stop` reaches the app. The other direction (wave 1
+   fix): restore then writes `<db>.restore-lock` and the server refuses to start
+   while it is under 10 minutes old (`server/restore-guard.ts`, imported before
+   anything opens the database); restore also re-checks the heartbeat right
+   before step 4.
 2. **Check the backup** — integrity ok, a Shop Manager database, not made by a
    newer app version (its last migration is newer than ours), not a live copy
-   with a `-wal` beside it, and not non-production data over a production
-   database.
+   with a `-wal` beside it, and the dataset rule (`restoreDatasetProblem`,
+   mirroring the seed rule): a production backup may go anywhere; a demo or
+   unlabeled backup never goes over production, into a file named `dp-erp.db`,
+   or over a database that has data — except demo over demo.
 3. **Prepare** — copy to `<db>.restoring`, run migrations there in
    rollback-journal mode (an older backup upgrades here; the server switches WAL
    back on at start), integrity check again.

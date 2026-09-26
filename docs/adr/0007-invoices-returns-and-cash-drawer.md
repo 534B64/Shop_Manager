@@ -98,7 +98,11 @@ Writes an `invoice_voids` row; the invoice and lines are untouched. Refunds
 what was paid (net of earlier refunds) as refund rows linked to the void — by
 original tender, or all to `refundMethod`; cash needs the drawer. Stock the
 sale deducted goes back as `return` inventory transactions (source
-`invoice_void`), less anything returns already restocked. By default the job
+`invoice_void`), less every unit already returned (restocked ones are already
+back; damaged ones stay off the shelf). The void row stores what it actually
+cancelled — `net_total_cents` / `net_tax_cents` = invoice total/tax minus the
+returns already taken (migration `0017`) — and the Z-report subtracts that, so
+a return followed by a void is never counted twice. By default the job
 is archived (the sale is cancelled, so it leaves the owed list);
 `keepJob: true` leaves it open, unlocked, to be corrected and re-invoiced under
 a new number.
@@ -107,6 +111,8 @@ a new number.
 
 `POST /api/returns` lists invoice lines + qty (≤ sold − already returned) and
 `restock` per line (only stock-item lines; damaged goods stay off the shelf).
+A restock never puts back more than the sale took off the shelf (`stockQty`,
+which is below qty when the sale clamped at zero) less what was returned before.
 Each part (subtotal, tax, discount) is refunded pro-rata by the difference of
 cumulative shares, so returning a whole line in pieces adds up to exactly the
 line. Money back = only what the customer overpaid once the return lowers what
@@ -116,7 +122,10 @@ payments + live refunds (`owedCents` in payments). A return whose value is
 over `posSettings.refundApprovalThresholdCents` (default 5000, admin,
 `PUT /api/settings/pos`) needs manager approval (`return.refund`); at or under
 it a cashier does it alone. The existing bare refund (`POST /api/payments`
-kind `refund`) still always needs approval.
+kind `refund`) still always needs approval, and is refused (409) when it is more
+than the job has been paid (`paidNetCents`). A payment row can't be voided when
+it is a return's or void's refund, or when its drawer session is closed — issue
+a refund/return instead.
 
 ### Price override
 
@@ -167,3 +176,13 @@ ES-module cycle is safe.
 - Not built: invoice/receipt printing, credit-memo numbering for returns,
   exchanges, per-line tax categories, multi-register, split tender on a counter
   sale (pay the rest through `/api/payments`), UI (next phase).
+
+## Known limits
+
+- Counter-sale price-override detection depends on the client sending
+  `suggestedUnitPriceCents` on the line: inventory items have no sell price,
+  so a line rung up with no suggestion is never flagged.
+- Jobs paid or picked up before migration `0016` are not invoiced
+  retroactively — invoice numbering starts at go-live. `POST /api/invoices`
+  can invoice one by hand if it's ever needed.
+- A $0 pickup (warranty redo, freebie) takes no invoice number.
