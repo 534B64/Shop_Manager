@@ -22,3 +22,5 @@ Read `CLAUDE.md` first — it is the project guide.
   `perf:baseline`) needs an explicit `DB_PATH` that is not `dp-erp.db`.
 - Server code follows the domain-module layout (ADR 0001): `server/modules/<domain>/`,
   with `index.ts` as the only import surface.
+- Client UI follows `docs/UI-GUIDE.md` (Material 3, ADR 0009): role tokens only, components from
+  `src/components/m3`, routes in `src/routes.tsx`, server-paged lists, pages ≤ ~300 lines.

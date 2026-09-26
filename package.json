@@ -15,6 +15,7 @@
     "db:seed": "tsx server/db/seed.ts",
     "db:seed:perf": "tsx server/db/seed-perf.ts",
     "perf:baseline": "tsx scripts/perf-baseline.ts",
+    "tokens": "tsx scripts/gen-tokens.ts",
     "test": "vitest run"
   },
   "allowScripts": {

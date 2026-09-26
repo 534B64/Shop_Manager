@@ -1,9 +1,12 @@
 import { THEMES, type Theme } from '../../shared/domain';
+import { DEFAULT_SEED, schemeFor } from './m3/scheme';
+import { isHexColor } from './m3/color';
+import { schemeVars } from './m3/tokens';
 
 export interface DashboardPrefs { due: boolean; owed: boolean; low: boolean; }
 export interface Prefs {
   theme: Theme; // light | dark | minimal (shown as "High Contrast")
-  accent?: string; // chosen accent color — applies to light & dark only
+  accent?: string; // seed color of this account's M3 scheme (all three themes)
   dashboard?: DashboardPrefs;
 }
 
@@ -24,19 +27,26 @@ export function getPrefs(): Prefs {
   return DEFAULT_PREFS;
 }
 
+/** The seed color in effect for these prefs. */
+export const seedOf = (p: Prefs): string =>
+  (isHexColor(p.accent) ? p.accent : DEFAULT_SEED).toLowerCase();
+
+let applied: Record<string, string> = {};
+
+/**
+ * Theme + accent (ADR 0009): data-theme picks the light / dark / high-contrast
+ * token block from src/styles/tokens.css; a non-default accent regenerates the
+ * M3 scheme from that seed and sets its color roles inline on <html>.
+ */
 export function applyPrefs(p: Prefs) {
   const root = document.documentElement;
   const theme = THEMES.includes(p.theme) ? p.theme : 'light';
   root.dataset.theme = theme;
-  // Light & dark honor a chosen accent color; High Contrast (minimal) is fixed.
-  if ((theme === 'light' || theme === 'dark') && p.accent) {
-    root.style.setProperty('--accent', p.accent);
-    root.style.setProperty('--accent-contrast', '#ffffff');
-  } else {
-    root.style.removeProperty('--accent');
-    root.style.removeProperty('--accent-contrast');
-  }
-  localStorage.setItem(KEY, JSON.stringify(p));
+  root.style.colorScheme = theme === 'dark' ? 'dark' : 'light';
+  for (const k of Object.keys(applied)) root.style.removeProperty(k);
+  applied = seedOf(p) === DEFAULT_SEED ? {} : schemeVars(schemeFor(seedOf(p), theme));
+  for (const [k, v] of Object.entries(applied)) root.style.setProperty(k, v);
+  try { localStorage.setItem(KEY, JSON.stringify(p)); } catch { /* private mode */ }
 }
 
 export function initTheme() {

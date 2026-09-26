@@ -64,8 +64,11 @@ The v1 win condition: **anyone in the shop can quote a job consistently.** When 
 
 - Easier to read than a typical ERP: generous type size, clear hierarchy, no 40-column grids.
 - But **dense enough to be meaningful** — a small-business dashboard, not a marketing site. One screen should answer "what's due, what's owed, what's low."
-- Theme support is a requirement: light, dark, and a minimal mode. Build with CSS variables/design tokens from day one.
-- Touch-friendly targets at the counter; keyboard-fast entry for quoting.
+- **Material Design 3** (ADR 0009), blue and white (seed `#2456c4`). **Follow `docs/UI-GUIDE.md`** when building or moving any page.
+- Theme support is a requirement: **light, dark, and High Contrast** (stored as `minimal`), plus the **per-account accent picker** — the accent is the seed of that account's M3 scheme in all three themes. Colors come only from the generated role tokens (`src/styles/tokens.css`, from `src/lib/m3/` — never hand-edit; `npm run tokens`) via Tailwind role classes; no raw colors.
+- **WCAG AA** on every token pairing, every theme, any accent (tested in `src/lib/m3/m3.test.ts`); High Contrast holds 7:1 for text.
+- Touch-friendly: **≥ 48px targets** on counter/POS screens (`touch` prop); keyboard-fast entry for quoting.
+- One route per page in `src/routes.tsx`, lazy-loaded, real links (bookmarks + back work); components from `src/components/m3`; no page file over ~300 lines; long lists are server-paged (`usePaged` + `DataTable`) — the browser never loads a full table.
 
 ## Conventions
 

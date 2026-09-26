@@ -1,4 +1,5 @@
-// Shared design-system primitives (Phase 9). One place for the look so every
+// DEPRECATED (ADR 0009): use src/components/m3 for new UI. Kept for copyToClipboard
+// and un-migrated pages. Shared design-system primitives (Phase 9). One place for the look so every
 // screen inherits it instead of re-deriving button/input/card classes. Built on
 // the existing CSS-variable tokens (--accent, --line, --surface, etc.) and the
 // light / dark / high-contrast (minimal) themes — these are class strings, not new colors.

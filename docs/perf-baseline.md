@@ -109,3 +109,30 @@ opening balances), same script:
 **No regression.** On-hand reads still use `inventory_items.count`; the ledger only costs an
 indexed `SUM` inside the guard trigger on writes. The full-table inventory endpoints (2.1 MB for
 `/api/inventory`) remain the paging target for the UI phase.
+
+## After UI foundation (2026-09-26)
+
+Fresh seed (`DB_PATH=/tmp/perf-ui.db npm run db:seed:perf`), same script plus new **paged probes**
+(`limit=50`); three runs, representative numbers. "Before" is the After Phase 2 column.
+
+| Endpoint | Before ms | After ms | Before KB | After KB | Note |
+|---|---:|---:|---:|---:|---|
+| `/api/dashboard` | 54.7 | **1.5** | 21.1 | **1.4** | low-stock `WHERE` + urgency `ORDER BY` in SQL, top 20 + `lowStockCount` |
+| `/api/inventory/valuation` | 56.7 | **2.0** | 0.5 | 0.5 | per-category `SUM` in SQL, same math |
+| `/api/inventory/reorder` (unpaged) | 47.0 | **5.3** | 85.5 | 85.5 | only low rows leave SQL; JS urgency sort kept |
+| `/api/inventory?limit=50` | — | 2.0 | — | 21.7 | **new** — page 1 of 5,000 + `count(*)` |
+| `/api/inventory?limit=50&q=red` | — | 2.5 | — | 21.6 | **new** — LIKE over name/color/vendor (99 hits) |
+| `/api/inventory?limit=50&offset=4950` | — | 6.5 | — | 21.2 | **new** — last page, worst-case OFFSET |
+| `/api/inventory?limit=50&low=1&sort=count` | — | 1.6 | — | 21.3 | **new** — 308 low items, by count |
+| `/api/inventory/reorder?limit=50` | — | 1.9 | — | 14.0 | **new** — urgency order in SQL |
+| `/api/inventory/usage?limit=50` | — | 1.8 | — | 6.5 | **new** — rate order in SQL |
+| `/api/inventory` (unpaged) | 70.5 | 68–74 | 2,059 | 2,152 | unchanged on purpose — old pages still call it |
+| `/api/inventory/usage` (unpaged) | 59.6 | 55–63 | 617.5 | 617.5 | unchanged on purpose |
+
+**Result.** A paged inventory view costs ~2 ms and ~22 KB instead of ~70 ms and 2.1 MB (≈100×
+smaller on the wire). The dashboard's low-stock summary and the valuation no longer scan the table
+in JS (~30× faster). The unpaged `/api/inventory` and `/usage` stay as they were until the page
+builders move the Inventory and Quick Order pages to `?limit=` — then nothing in the browser loads
+the full table. (Reorder "before" is the original 2026-09-25 number; Phase 2 didn't re-list it.)
+Still open: `/api/balances` (15 ms, 59 KB) and the dashboard's `/api/jobs?limit=200` (122 KB) — a
+server-side "due soon" / "owing" query would shrink both.
