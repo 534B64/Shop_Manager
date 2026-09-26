@@ -1,14 +1,20 @@
 import type { FastifyInstance } from 'fastify';
-import { like, desc, eq, sql } from 'drizzle-orm';
-import { db } from '../../db/index.js';
+import { desc, eq, sql, isNull } from 'drizzle-orm';
+import { db, withTx } from '../../db/index.js';
 import { customers, jobs, customerCredits } from '../../db/schema/index.js';
 import { creditBalanceCents } from '../payments/index.js';
 import { requireRole, requireApproval, approvalSchema } from '../auth/index.js';
+import { audit } from '../audit/index.js';
+
+const approvalOnlyBody = { body: { type: ['object', 'null'], additionalProperties: false,
+  properties: { approval: approvalSchema } } } as const;
 
 export async function customerRoutes(app: FastifyInstance) {
   // List with last-purchase date; client flags accounts idle > 30 days.
+  // Archived customers are hidden unless ?includeArchived=1 (ADR 0005).
   app.get('/api/customers', async (req) => {
-    const q = (req.query as { q?: string }).q?.trim();
+    const { q: rawQ, includeArchived } = req.query as { q?: string; includeArchived?: string };
+    const q = rawQ?.trim();
     const last = db.$with('last').as(
       db.select({ customerId: jobs.customerId, lastJobAt: sql<string>`max(${jobs.createdAt})`.as('last_job_at') })
         .from(jobs).groupBy(jobs.customerId),
@@ -17,11 +23,12 @@ export async function customerRoutes(app: FastifyInstance) {
       .select({
         id: customers.id, name: customers.name, phone: customers.phone,
         email: customers.email, notes: customers.notes, createdAt: customers.createdAt,
-        level: customers.level,
+        level: customers.level, archivedAt: customers.archivedAt,
         lastJobAt: last.lastJobAt,
       })
       .from(customers)
-      .leftJoin(last, eq(last.customerId, customers.id));
+      .leftJoin(last, eq(last.customerId, customers.id))
+      .where(includeArchived === '1' ? undefined : isNull(customers.archivedAt));
     if (q) {
       // Match by name OR phone digits (phones are stored formatted).
       const rows = await base.limit(2000);
@@ -36,6 +43,7 @@ export async function customerRoutes(app: FastifyInstance) {
   });
 
   // Account view: profile, credit balance, job history, credit ledger.
+  // Archived customers still open here (old orders link to them).
   app.get('/api/customers/:id', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const [customer] = await db.select().from(customers).where(eq(customers.id, id));
@@ -68,9 +76,12 @@ export async function customerRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'An email address is required for new customers.' });
       }
     }
-    const [row] = await db.insert(customers).values(body).returning();
-    reply.code(201);
-    return row;
+    return withTx(async (tx) => {
+      const [row] = await tx.insert(customers).values(body).returning();
+      await audit(tx, req, { action: 'customer.create', entity: 'customer', entityId: row.id, after: row });
+      reply.code(201);
+      return row;
+    });
   });
 
   app.put('/api/customers/:id', {
@@ -83,9 +94,13 @@ export async function customerRoutes(app: FastifyInstance) {
       } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const [row] = await db.update(customers).set(req.body as object).where(eq(customers.id, id)).returning();
-    if (!row) return reply.code(404).send({ error: 'Customer not found' });
-    return row;
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(customers).where(eq(customers.id, id));
+      if (!before) return reply.code(404).send({ error: 'Customer not found' });
+      const [row] = await tx.update(customers).set(req.body as object).where(eq(customers.id, id)).returning();
+      await audit(tx, req, { action: 'customer.update', entity: 'customer', entityId: id, before, after: row });
+      return row;
+    });
   });
 
   // Levels (discount tiers) are manager-assigned (ADR 0004).
@@ -96,29 +111,52 @@ export async function customerRoutes(app: FastifyInstance) {
     if (!requireRole(req, reply, 'manager')) return reply;
     const id = Number((req.params as { id: string }).id);
     const { level } = req.body as { level: number };
-    const [row] = await db.update(customers).set({ level }).where(eq(customers.id, id)).returning();
-    if (!row) return reply.code(404).send({ error: 'Customer not found' });
-    return row;
+    return withTx(async (tx) => {
+      const [before] = await tx.select().from(customers).where(eq(customers.id, id));
+      if (!before) return reply.code(404).send({ error: 'Customer not found' });
+      const [row] = await tx.update(customers).set({ level }).where(eq(customers.id, id)).returning();
+      await audit(tx, req, { action: 'customer.level', entity: 'customer', entityId: id,
+        before: { level: before.level }, after: { level: row.level } });
+      return row;
+    });
   });
 
-  // Remove a customer — manager approval (ADR 0004). Blocked if they have any order
-  // history — those rows are the books and must stay; only clean/duplicate/mistake
-  // accounts (no jobs) can be removed. Their credit ledger is cleared with them.
-  app.delete('/api/customers/:id', {
-    schema: { body: { type: ['object', 'null'], additionalProperties: false,
-      properties: { approval: approvalSchema } } },
-  }, async (req, reply) => {
+  // "Delete" = archive (ADR 0005) — manager approval (ADR 0004). The customer
+  // disappears from lists and pickers; their orders, payments and credit
+  // ledger are untouched, and old orders still show their name.
+  app.delete('/api/customers/:id', { schema: approvalOnlyBody }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const [customer] = await db.select().from(customers).where(eq(customers.id, id));
-    if (!customer) return reply.code(404).send({ error: 'Customer not found' });
-    const [jobRef] = await db.select({ id: jobs.id }).from(jobs).where(eq(jobs.customerId, id)).limit(1);
-    if (jobRef) return reply.code(409).send({ error: 'This customer has order history — it cannot be removed (the books stay intact).' });
-    if (!(await requireApproval(req, reply, { action: 'customer.delete', entity: 'customer', entityId: id,
-      details: { name: customer.name } }))) return reply;
-    await db.delete(customerCredits).where(eq(customerCredits.customerId, id));
-    const [row] = await db.delete(customers).where(eq(customers.id, id)).returning();
-    if (!row) return reply.code(404).send({ error: 'Customer not found' });
-    return { ok: true };
+    return withTx(async (tx) => {
+      const [customer] = await tx.select().from(customers).where(eq(customers.id, id));
+      if (!customer) return reply.code(404).send({ error: 'Customer not found' });
+      if (customer.archivedAt) return { ok: true }; // wifi retry — already done
+      const approver = await requireApproval(req, reply, { action: 'customer.delete', entity: 'customer', entityId: id,
+        details: { name: customer.name } });
+      if (!approver) return reply;
+      const [row] = await tx.update(customers)
+        .set({ archivedAt: new Date().toISOString(), archivedBy: req.user!.id })
+        .where(eq(customers.id, id)).returning();
+      await audit(tx, req, { action: 'customer.archive', entity: 'customer', entityId: id,
+        before: customer, after: row, approvalId: approver.approvalId });
+      return { ok: true };
+    });
+  });
+
+  app.post('/api/customers/:id/unarchive', { schema: approvalOnlyBody }, async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    return withTx(async (tx) => {
+      const [customer] = await tx.select().from(customers).where(eq(customers.id, id));
+      if (!customer) return reply.code(404).send({ error: 'Customer not found' });
+      if (!customer.archivedAt) return customer;
+      const approver = await requireApproval(req, reply, { action: 'customer.unarchive', entity: 'customer', entityId: id,
+        details: { name: customer.name } });
+      if (!approver) return reply;
+      const [row] = await tx.update(customers).set({ archivedAt: null, archivedBy: null })
+        .where(eq(customers.id, id)).returning();
+      await audit(tx, req, { action: 'customer.unarchive', entity: 'customer', entityId: id,
+        before: customer, after: row, approvalId: approver.approvalId });
+      return row;
+    });
   });
 
   // Manual credit adjustment: + grant (goodwill, prepay), − correction.
@@ -134,13 +172,18 @@ export async function customerRoutes(app: FastifyInstance) {
     const id = Number((req.params as { id: string }).id);
     const { deltaCents, note } = req.body as { deltaCents: number; note?: string };
     if (deltaCents === 0) return reply.code(400).send({ error: 'Delta cannot be zero' });
-    const [customer] = await db.select().from(customers).where(eq(customers.id, id));
-    if (!customer) return reply.code(404).send({ error: 'Customer not found' });
-    const bal = await creditBalanceCents(id);
-    if (bal + deltaCents < 0) return reply.code(409).send({ error: `Credit cannot go negative (current ${(bal / 100).toFixed(2)})` });
-    if (!(await requireApproval(req, reply, { action: 'customer.credit_adjust', entity: 'customer', entityId: id,
-      reason: note ?? null, details: { deltaCents } }))) return reply;
-    await db.insert(customerCredits).values({ customerId: id, deltaCents, note: note ?? null });
-    return { creditCents: bal + deltaCents };
+    return withTx(async (tx) => {
+      const [customer] = await tx.select().from(customers).where(eq(customers.id, id));
+      if (!customer) return reply.code(404).send({ error: 'Customer not found' });
+      const bal = await creditBalanceCents(id, tx);
+      if (bal + deltaCents < 0) return reply.code(409).send({ error: `Credit cannot go negative (current ${(bal / 100).toFixed(2)})` });
+      const approver = await requireApproval(req, reply, { action: 'customer.credit_adjust', entity: 'customer', entityId: id,
+        reason: note ?? null, details: { deltaCents } });
+      if (!approver) return reply;
+      const [entry] = await tx.insert(customerCredits).values({ customerId: id, deltaCents, note: note ?? null }).returning();
+      await audit(tx, req, { action: 'customer.credit_adjust', entity: 'customer', entityId: id,
+        before: { creditCents: bal }, after: { creditCents: bal + deltaCents, entry }, approvalId: approver.approvalId });
+      return { creditCents: bal + deltaCents };
+    });
   });
 }

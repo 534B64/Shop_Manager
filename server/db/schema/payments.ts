@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, index } from 'drizzle-orm/sqlite-core';
 import { nowIso } from './common.js';
 import { customers } from './customers.js';
 import { jobs } from './jobs.js';
@@ -17,7 +17,11 @@ export const payments = sqliteTable('payments', {
   createdBy: text('created_by'),
   note: text('note'),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
-});
+}, (t) => ({
+  // Immutable except the void fields (trigger in 0014, ADR 0005).
+  jobIdx: index('payments_job_idx').on(t.jobId),
+  createdAtIdx: index('payments_created_at_idx').on(t.createdAt),
+}));
 
 export const customerCredits = sqliteTable('customer_credits', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -25,4 +29,4 @@ export const customerCredits = sqliteTable('customer_credits', {
   deltaCents: integer('delta_cents').notNull(), // + add credit, − apply credit
   note: text('note'),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
-});
+}, (t) => ({ customerIdx: index('customer_credits_customer_idx').on(t.customerId) }));

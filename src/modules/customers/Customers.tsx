@@ -6,7 +6,7 @@ import { get, post, put, del } from '../../lib/api';
 import type { Customer, Job } from '../../lib/types';
 
 interface CreditEntry { id: number; deltaCents: number; note: string | null; createdAt: string; }
-interface CustomerDetail extends Customer { creditCents: number; jobs: Job[]; creditLedger: CreditEntry[]; }
+interface CustomerDetail extends Customer { creditCents: number; jobs: Job[]; creditLedger: CreditEntry[]; archivedAt?: string | null; }
 const input = 'px-3 py-2.5 bg-bg border border-line rounded-token text-base';
 
 export default function Customers() {
@@ -15,6 +15,7 @@ export default function Customers() {
   const [sel, setSel] = useState<CustomerDetail | null>(null);
   const [error, setError] = useState('');
   const [printing, setPrinting] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
 
   useEffect(() => {
     if (printing) {
@@ -23,15 +24,19 @@ export default function Customers() {
     }
   }, [printing]);
 
-  const refreshList = (query = '') =>
-    get<Customer[]>(`/api/customers${query ? `?q=${encodeURIComponent(query)}` : ''}`).then(setList).catch(() => {});
+  const refreshList = (query = '', archived = showArchived) => {
+    const params = new URLSearchParams();
+    if (query) params.set('q', query);
+    if (archived) params.set('includeArchived', '1');
+    const qs = params.toString();
+    return get<Customer[]>(`/api/customers${qs ? `?${qs}` : ''}`).then(setList).catch(() => {});
+  };
   const open = (id: number) => get<CustomerDetail>(`/api/customers/${id}`).then(setSel).catch(() => {});
 
-  useEffect(() => { refreshList(); }, []);
   useEffect(() => {
     const t = setTimeout(() => refreshList(q.trim()), 250);
     return () => clearTimeout(t);
-  }, [q]);
+  }, [q, showArchived]);
 
   async function adjustCredit(sign: 1 | -1) {
     if (!sel) return;
@@ -67,16 +72,27 @@ export default function Customers() {
     catch (e) { setError(e instanceof Error ? e.message : 'Level change failed.'); }
   }
 
-  async function removeCustomer() {
+  // Archive, never delete (ADR 0005): hidden from lists and pickers; orders,
+  // payments and credit history stay, and Restore brings it back.
+  async function archiveCustomer() {
     if (!sel) return;
-    if (sel.jobs.length > 0) return setError('This customer has order history — it cannot be removed (the books stay intact).');
-    if (!confirm(`Remove "${sel.name}"? This cannot be undone.`)) return;
+    if (!confirm(`Archive "${sel.name}"? They are hidden from lists and pickers; their orders and credit history stay. You can restore them later.`)) return;
     setError('');
     try {
       await del(`/api/customers/${sel.id}`, {});
       setSel(null);
       refreshList(q.trim());
-    } catch (e) { setError(e instanceof Error ? e.message : 'Remove failed'); }
+    } catch (e) { setError(e instanceof Error ? e.message : 'Archive failed'); }
+  }
+
+  async function restoreCustomer() {
+    if (!sel) return;
+    setError('');
+    try {
+      await post(`/api/customers/${sel.id}/unarchive`, {});
+      open(sel.id);
+      refreshList(q.trim());
+    } catch (e) { setError(e instanceof Error ? e.message : 'Restore failed'); }
   }
 
   return (
@@ -85,7 +101,11 @@ export default function Customers() {
       {error && <p className="text-danger mb-3">{error}</p>}
       <div className="grid gap-6 lg:grid-cols-[320px_1fr]">
         <section>
-          <input className={`${input} w-full mb-3`} placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <input className={`${input} w-full mb-2`} placeholder="Search…" value={q} onChange={(e) => setQ(e.target.value)} />
+          <label className="flex items-center gap-2 text-sm text-muted mb-3">
+            <input type="checkbox" checked={showArchived} onChange={(e) => setShowArchived(e.target.checked)} />
+            Show archived
+          </label>
           <div className="bg-surface border border-line rounded-token divide-y divide-line">
             {list.map((c) => {
               const cutoff = new Date(Date.now() - 30 * 86400000).toISOString();
@@ -95,7 +115,9 @@ export default function Customers() {
                   className={`block w-full text-left px-4 py-3 hover:bg-bg ${sel?.id === c.id ? 'bg-bg' : ''}`}>
                   <div className="font-semibold flex items-center gap-2">
                     {c.name}
-                    {inactive && <span className="text-[10px] px-1.5 py-0.5 rounded-token border border-line text-muted">INACTIVE</span>}
+                    {c.archivedAt
+                      ? <span className="text-[10px] px-1.5 py-0.5 rounded-token border border-line text-muted">ARCHIVED</span>
+                      : inactive && <span className="text-[10px] px-1.5 py-0.5 rounded-token border border-line text-muted">INACTIVE</span>}
                   </div>
                   <div className="text-sm text-muted">
                     {c.phone ?? '—'} · last purchase {c.lastJobAt ? formatDate(c.lastJobAt) : 'never'}
@@ -114,7 +136,10 @@ export default function Customers() {
               <div className="bg-surface border border-line rounded-token p-5">
                 <div className="flex items-start justify-between">
                   <div>
-                    <h2 className="text-xl font-bold">{sel.name}</h2>
+                    <h2 className="text-xl font-bold">
+                      {sel.name}
+                      {sel.archivedAt && <span className="ml-2 align-middle text-xs px-1.5 py-0.5 rounded-token border border-line text-muted font-normal">ARCHIVED</span>}
+                    </h2>
                     <p className="text-muted text-sm mt-1">
                       {sel.phone ?? 'no phone'} · {sel.email ?? 'no email'}
                       <button onClick={() => editField('phone')} className="ml-2 text-accent underline">edit phone</button>
@@ -134,7 +159,9 @@ export default function Customers() {
                       <button onClick={() => adjustCredit(1)} className="px-3 py-1.5 text-sm bg-accent text-accent-contrast rounded-token">Add</button>
                       <button onClick={() => adjustCredit(-1)} className="px-3 py-1.5 text-sm border border-line rounded-token hover:bg-bg">Reduce</button>
                     </div>
-                    <button onClick={removeCustomer} className="mt-2 px-3 py-1.5 text-sm border border-line rounded-token text-danger hover:bg-bg">Remove customer</button>
+                    {sel.archivedAt
+                      ? <button onClick={restoreCustomer} className="mt-2 px-3 py-1.5 text-sm border border-line rounded-token hover:bg-bg">Restore customer</button>
+                      : <button onClick={archiveCustomer} className="mt-2 px-3 py-1.5 text-sm border border-line rounded-token text-danger hover:bg-bg">Archive customer</button>}
                   </div>
                 </div>
               </div>

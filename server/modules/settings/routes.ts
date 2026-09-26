@@ -1,24 +1,29 @@
 import type { FastifyInstance } from 'fastify';
-import { eq } from 'drizzle-orm';
-import { db } from '../../db/index.js';
-import { settings } from '../../db/schema/index.js';
+import { withTx, type Db } from '../../db/index.js';
 import { DEFAULT_UNIT_TYPES } from '../../../shared/domain.js';
-import { taxRatePct } from './service.js';
+import { taxRatePct, getSetting, setSetting } from './service.js';
 import { requireRole } from '../auth/index.js';
+import { audit } from '../audit/index.js';
 
-async function getJson<T>(key: string, fallback: T): Promise<T> {
-  const [row] = await db.select().from(settings).where(eq(settings.key, key));
-  if (!row) return fallback;
-  try { return { ...fallback, ...JSON.parse(row.value) }; } catch { return fallback; }
+async function getJson<T>(key: string, fallback: T, dbx?: Db): Promise<T> {
+  const raw = await getSetting(key, dbx);
+  if (raw == null) return fallback;
+  try { return { ...fallback, ...JSON.parse(raw) }; } catch { return fallback; }
 }
-async function setJson(key: string, value: unknown) {
-  const v = JSON.stringify(value);
-  const [row] = await db.select().from(settings).where(eq(settings.key, key));
-  if (row) await db.update(settings).set({ value: v }).where(eq(settings.key, key));
-  else await db.insert(settings).values({ key, value: v });
+
+/** Upsert a JSON setting inside a transaction, with its audit row. */
+async function saveJson(req: Parameters<typeof audit>[1], key: string, fallback: object, patch: object) {
+  return withTx(async (tx) => {
+    const before = await getJson(key, fallback, tx);
+    const next = { ...before, ...patch };
+    await setSetting(key, JSON.stringify(next), tx);
+    await audit(tx, req, { action: 'settings.update', entity: 'setting', entityId: key, before, after: next });
+    return next;
+  });
 }
 
 export const DEFAULT_LEVEL_DISCOUNTS = { 1: 5, 2: 10, 3: 15 } as Record<string, number>;
+const DEFAULT_INVENTORY = { pctThreshold: 5, unitThreshold: 5, reorderBufferDays: 3 };
 
 export async function settingsRoutes(app: FastifyInstance) {
   // Sales tax — default 8.25%, totals default to tax ON.
@@ -29,9 +34,12 @@ export async function settingsRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
     const { ratePct } = req.body as { ratePct: number };
-    const [row] = await db.select().from(settings).where(eq(settings.key, 'taxRatePct'));
-    if (row) await db.update(settings).set({ value: String(ratePct) }).where(eq(settings.key, 'taxRatePct'));
-    else await db.insert(settings).values({ key: 'taxRatePct', value: String(ratePct) });
+    await withTx(async (tx) => {
+      const before = await taxRatePct(tx);
+      await setSetting('taxRatePct', String(ratePct), tx);
+      await audit(tx, req, { action: 'settings.update', entity: 'setting', entityId: 'taxRatePct',
+        before: { ratePct: before }, after: { ratePct } });
+    });
     return { ratePct };
   });
 
@@ -55,7 +63,7 @@ export async function settingsRoutes(app: FastifyInstance) {
     // Dedupe (case-sensitive exact match — "sqft" and "Sqft" are kept distinct
     // on purpose; the admin can merge by editing the chip text directly).
     const deduped = [...new Set(units.map((u) => u.trim()).filter(Boolean))];
-    await setJson('unitTypes', { units: deduped });
+    await saveJson(req, 'unitTypes', { units: [...DEFAULT_UNIT_TYPES] }, { units: deduped });
     return { units: deduped };
   });
 
@@ -63,8 +71,7 @@ export async function settingsRoutes(app: FastifyInstance) {
   // threshold (a variance flags when it beats EITHER the % or the flat-unit
   // limit) and the reorder buffer days added on top of supplier lead time in
   // the AUTO Min suggestion. Defaults live in modules/inventory/service.ts.
-  app.get('/api/settings/inventory', async () =>
-    getJson('inventorySettings', { pctThreshold: 5, unitThreshold: 5, reorderBufferDays: 3 }));
+  app.get('/api/settings/inventory', async () => getJson('inventorySettings', DEFAULT_INVENTORY));
   app.put('/api/settings/inventory', {
     schema: { body: { type: 'object', additionalProperties: false, minProperties: 1,
       properties: {
@@ -74,9 +81,7 @@ export async function settingsRoutes(app: FastifyInstance) {
       } } },
   }, async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
-    const next = { ...(await getJson('inventorySettings', { pctThreshold: 5, unitThreshold: 5, reorderBufferDays: 3 })), ...(req.body as object) };
-    await setJson('inventorySettings', next);
-    return next;
+    return saveJson(req, 'inventorySettings', DEFAULT_INVENTORY, req.body as object);
   });
 
   // Discount % per customer level (1–3). Level 0 never sees discounts.
@@ -90,8 +95,6 @@ export async function settingsRoutes(app: FastifyInstance) {
       } } },
   }, async (req, reply) => {
     if (!requireRole(req, reply, 'admin')) return reply;
-    const next = { ...(await getJson('levelDiscounts', DEFAULT_LEVEL_DISCOUNTS)), ...(req.body as object) };
-    await setJson('levelDiscounts', next);
-    return next;
+    return saveJson(req, 'levelDiscounts', DEFAULT_LEVEL_DISCOUNTS, req.body as object);
   });
 }

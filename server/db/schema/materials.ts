@@ -1,5 +1,6 @@
 import { sqliteTable, text, integer } from 'drizzle-orm/sqlite-core';
 import { nowIso } from './common.js';
+import { users } from './users.js';
 
 export const materials = sqliteTable('materials', {
   id: integer('id').primaryKey({ autoIncrement: true }),
@@ -24,6 +25,9 @@ export const materials = sqliteTable('materials', {
   laborFactorPct: integer('labor_factor_pct').notNull().default(100),
   active: integer('active', { mode: 'boolean' }).notNull().default(true),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
+  // Archive, never delete (ADR 0005): hidden from lists/pickers, kept for history.
+  archivedAt: text('archived_at'),
+  archivedBy: integer('archived_by').references(() => users.id),
 });
 
 // Admin-managed color list for a roll material (usesRoll). A color here is a
@@ -34,4 +38,7 @@ export const materialColors = sqliteTable('material_colors', {
   materialId: integer('material_id').notNull().references(() => materials.id),
   name: text('name').notNull(),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
+  // Archive, never delete (ADR 0005): hidden from lists/pickers, kept for history.
+  archivedAt: text('archived_at'),
+  archivedBy: integer('archived_by').references(() => users.id),
 });

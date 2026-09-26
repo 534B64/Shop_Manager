@@ -27,7 +27,9 @@ interface Probe {
 const PROBES: Probe[] = [
   { page: 'Dashboard', url: '/api/dashboard', unpaginated: true, note: 'all inventory rows, filtered in memory' },
   { page: 'Dashboard / Orders', url: '/api/jobs?limit=200', note: 'LIMIT 200 (server cap 500)' },
-  { page: 'Quotes', url: '/api/jobs?limit=50', note: 'LIMIT 50; search `q` filters in memory AFTER the limit' },
+  { page: 'Quotes', url: '/api/jobs?limit=50', note: 'LIMIT 50' },
+  { page: 'Quotes (search)', url: '/api/jobs?limit=50&q=decal', note: 'LIKE over title/PO/tags/file/customer in SQL, before LIMIT (Phase 1b)' },
+  { page: 'Quotes (search, no hit)', url: '/api/jobs?limit=50&q=zzzz-nohit', note: 'worst case: scans every job' },
   { page: '(max page size)', url: '/api/jobs?limit=500', note: 'server cap' },
   { page: 'Orders (detail)', url: '/api/jobs/1', note: 'one job + items' },
   { page: 'Customers', url: '/api/customers', note: 'LIMIT 200; group-by over all jobs' },

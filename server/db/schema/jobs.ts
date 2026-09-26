@@ -1,4 +1,4 @@
-import { sqliteTable, text, integer, real } from 'drizzle-orm/sqlite-core';
+import { sqliteTable, text, integer, real, index } from 'drizzle-orm/sqlite-core';
 import { nowIso } from './common.js';
 import { customers } from './customers.js';
 import { materials } from './materials.js';
@@ -37,11 +37,15 @@ export const jobs = sqliteTable('jobs', {
   discountPct: real('discount_pct'), // customer-level discount applied (after tax)
   // Grand total actually charged: primary + items, tax and discount applied.
   totalCents: integer('total_cents'),
-  // Soft delete (admin/user password required). Money rows stay for the books.
+  // Soft delete ("Remove" — manager approval, ADR 0004/0005). Money rows stay for the books.
   deletedAt: text('deleted_at'),
   notes: text('notes'),
   createdAt: text('created_at').notNull().$defaultFn(nowIso),
-});
+}, (t) => ({
+  createdAtIdx: index('jobs_created_at_idx').on(t.createdAt),
+  statusIdx: index('jobs_status_idx').on(t.status),
+  customerIdx: index('jobs_customer_idx').on(t.customerId),
+}));
 
 // Extra line items on a job (beyond the primary estimated item).
 export const jobItems = sqliteTable('job_items', {
@@ -58,4 +62,7 @@ export const jobItems = sqliteTable('job_items', {
   fileRef: text('file_ref'),
   qty: integer('qty').notNull().default(1),
   priceCents: integer('price_cents').notNull(),
-});
+  // Set when a job edit replaced this line (ADR 0005) — kept for history,
+  // ignored by every reader.
+  deletedAt: text('deleted_at'),
+}, (t) => ({ jobIdx: index('job_items_job_idx').on(t.jobId) }));

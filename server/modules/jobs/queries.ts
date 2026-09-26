@@ -1,7 +1,7 @@
 // Job read-model: the joined select every jobs endpoint returns.
-import { eq } from 'drizzle-orm';
-import { db } from '../../db/index.js';
-import { jobs, customers, materials } from '../../db/schema/index.js';
+import { and, eq, isNull } from 'drizzle-orm';
+import { db, type Db } from '../../db/index.js';
+import { jobs, jobItems, customers, materials } from '../../db/schema/index.js';
 
 const jobSelect = {
   id: jobs.id,
@@ -35,10 +35,16 @@ const jobSelect = {
   createdAt: jobs.createdAt,
 };
 
-export function baseQuery() {
-  return db
+export function baseQuery(dbx: Db = db) {
+  return dbx
     .select(jobSelect)
     .from(jobs)
     .leftJoin(customers, eq(jobs.customerId, customers.id))
     .leftJoin(materials, eq(jobs.materialId, materials.id));
+}
+
+/** A job's live lines — lines a later edit replaced (deletedAt set) are kept
+ *  for history but never shown or priced (ADR 0005). */
+export function liveItems(jobId: number, dbx: Db = db) {
+  return dbx.select().from(jobItems).where(and(eq(jobItems.jobId, jobId), isNull(jobItems.deletedAt)));
 }

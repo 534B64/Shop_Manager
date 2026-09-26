@@ -64,5 +64,30 @@ compare; numbers are only comparable against the same seed.
   `/api/balances` and `/api/reports/summary` scale with jobs/payments and are the next to watch.
 - Job/customer/payment lists are capped server-side (`limit`, 200, 100) and are fast (2–5 ms).
   Caveat: `/api/jobs?q=` filters in memory *after* the limit, so search only covers the newest N rows.
+  *(Fixed in Phase 1b — the filter is now SQL `LIKE` before `LIMIT`; see below.)*
 - Seed caveat: `/api/customers?q=Walk-in` returns 0 rows because the perf seed has no Walk-in
   customer; the cost measured is the 500-row scan + filter.
+
+## After Phase 1b (2026-09-25)
+
+Same seed (`DB_PATH=/tmp/perf-1b.db npm run db:seed:perf`), same script, run 3× (the first run
+on a busy box was ~1.4× slower across the board, including untouched inventory/CSV endpoints —
+machine noise). Representative run:
+
+| Endpoint | Before ms | After ms | Note |
+|---|---:|---:|---|
+| `/api/jobs?limit=50` | 2.1 | 1.6 | new `jobs(created_at)` / `jobs(status)` indexes |
+| `/api/jobs?limit=50&q=decal` | — | 1.7 | **new probe** — search now runs in SQL before LIMIT |
+| `/api/jobs?limit=50&q=zzzz-nohit` | — | 1.7 | **new probe** — no-hit worst case scans all 3,000 jobs |
+| `/api/jobs?limit=200` | 4.8 | 4.2 | |
+| `/api/customers` | 2.3 | 2.9 | +`archived_at` column / filter (42.7 KB vs 39.2 KB) |
+| `/api/inventory` | 60.4 | 66.1 | unchanged code; run-to-run spread 66–95 ms |
+| `/api/dashboard` | 54.8 | 53.8 | |
+| `/api/balances` | 13.6 | 13.4 | |
+| `/api/payments` | 1.5 | 1.1 | `payments(created_at)` index |
+| `/api/reports/payments.csv` | 23.7 | 22.5 | |
+
+**Nothing got meaningfully slower.** The archive filter and audit columns add well under a
+millisecond; the jobs-search fix costs nothing measurable at 3,000 jobs. Writes are not in this
+GET-only baseline — each mutation now also writes one audit row inside its transaction, which is a
+single indexed insert. The inventory full-scan findings above still stand (next target).

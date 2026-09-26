@@ -85,7 +85,10 @@ export default function Quotes() {
     get<Job[]>(`/api/jobs?limit=50${q ? `&q=${encodeURIComponent(q)}` : ''}`).then(setJobs).catch(() => {});
 
   useEffect(() => {
-    get<Material[]>('/api/materials').then(setMaterials).catch(() => {});
+    // All materials, archived/inactive included, so an existing job still shows
+    // the material it was quoted with; the pickers below list only live ones
+    // plus whatever this draft already uses (ADR 0005).
+    get<Material[]>('/api/materials?all=1&includeArchived=1').then(setMaterials).catch(() => {});
     get<{ ratePct: number }>('/api/settings/tax').then((t) => setTaxRate(t.ratePct)).catch(() => {});
     get<Record<string, number>>('/api/settings/levels').then(setLevels).catch(() => {});
     refresh();
@@ -167,8 +170,11 @@ export default function Quotes() {
     return () => clearTimeout(t);
   }, [showRoll, draft.materialId, draft.materialColor, draft.widthIn, draft.heightIn, draft.items, materials]);
   const isNewCustomer = !draft.customerId && draft.customerName.trim().length > 0;
-  const addons = materials.filter((m) => m.isAddon);
-  const regularMaterials = materials.filter((m) => !m.isAddon);
+  const inUse = new Set([draft.materialId, ...draft.items.map((it) => it.materialId)]);
+  const isLive = (m: Material) => m.active && !m.archivedAt;
+  const pickable = materials.filter((m) => isLive(m) || inUse.has(m.id));
+  const addons = pickable.filter((m) => m.isAddon);
+  const regularMaterials = pickable.filter((m) => !m.isAddon);
 
   // ---- Roll auto-select (derived; manual pick sets rollAuto=false) ----
   const autoMainRoll = showRoll ? autoRollWidth(Number(draft.widthIn) || null, Number(draft.heightIn) || null) : null;
@@ -548,9 +554,9 @@ export default function Quotes() {
                 + Add item
               </button>
             </div>
-            {addons.length > 0 && (
+            {addons.some(isLive) && (
               <div className="flex flex-wrap gap-2 mb-2">
-                {addons.map((a) => (
+                {addons.filter(isLive).map((a) => (
                   <button key={a.id} type="button"
                     className="px-2.5 py-1 text-xs rounded-token border border-line text-muted hover:bg-bg"
                     onClick={() => set('items', [...draft.items, { ...newItem(draft.type), title: a.name, materialId: a.id }])}>
