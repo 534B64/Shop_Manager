@@ -9,6 +9,8 @@ import * as schema from './schema/index.js';
 
 // Single SQLite file — rides the NAS → cloud backup pipeline as-is.
 const dbPath = process.env.DB_PATH ?? './data/dp-erp.db';
+/** The database file this process uses (startup log, backups, server lock). */
+export const DB_PATH = dbPath;
 fs.mkdirSync(path.dirname(path.resolve(dbPath)), { recursive: true });
 
 const client = createClient({ url: `file:${dbPath}` });

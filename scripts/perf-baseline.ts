@@ -8,9 +8,10 @@
 //         (seed it first: DB_PATH=/tmp/perf-test.db npm run db:seed:perf)
 //
 // Refuses to run unless DB_PATH is set explicitly and is not "dp-erp.db".
-import { requireSafePerfDb } from '../server/db/perf-guard.js';
+import { requireSafePerfDb, refuseProductionDb } from '../server/db/perf-guard.js';
 
 requireSafePerfDb('perf:baseline');
+await refuseProductionDb('perf:baseline');
 
 const RUNS = 5;
 

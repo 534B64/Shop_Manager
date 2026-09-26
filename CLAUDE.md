@@ -72,6 +72,8 @@ The v1 win condition: **anyone in the shop can quote a job consistently.** When 
 - Plain, boring code over clever code. This will be maintained sporadically.
 - Migrations checked in; `db:migrate` must run clean on a fresh SQLite file.
 - Seed script with realistic shop data (materials, sample jobs) for dev.
+- **Demo vs production data (ADR 0008)**: every database may carry `settings.dataset` = `demo` | `production` (never relabeled). Demo data lives in `data/demo.db` (`npm run db:seed` default; `3-Start-Dev.bat` runs on it). Any script that writes fake data must refuse a production-labeled DB (and seeds also refuse an unlabeled `dp-erp.db` or unlabeled DB with data) — reuse `server/db/dataset.ts`. A real shop DB is only started with `npm run db:init-prod`, which has no override flag.
+- **Backups (ADR 0008)**: `npm run db:backup` (`VACUUM INTO` + verify + rotate; the server also runs it daily at `BACKUP_HOUR`) and `npm run db:restore -- <file>` (refuses while the server's heartbeat lock is fresh; sets the current DB aside as `*.pre-restore-*.db`, never deletes it). Never treat a raw copy of the live `.db`/`-wal` as a backup. Tests and drills use temp dirs only — never `data/` or a real `.db`. Procedures: `docs/BACKUP.md`, `docs/PRODUCTION-SETUP.md`.
 - Money as integer cents. Dates in ISO 8601, displayed local.
 - Tests for the estimator math and status transitions at minimum.
 - **No hard deletes** (ADR 0005). "Delete" archives (`archived_at`/`archived_by`, or `deleted_at` on jobs/job_items); list endpoints hide archived rows unless `?includeArchived=1`, and every archive has a `POST …/unarchive` with the same permission. SQLite triggers reject `DELETE` on the protected tables and edits to payment amounts / ledger rows — don't work around them.

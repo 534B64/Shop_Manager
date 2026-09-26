@@ -4,7 +4,9 @@ ERP/POS for Decals Plus. See `CONTEXT.md` (business background), `CLAUDE.md` (pr
 
 ## Quick start (Windows)
 
-Double-click, in order: `batch\1-Install.bat` → `batch\2-Seed-Database.bat` → `batch\3-Start-Dev.bat`. The browser opens automatically. `4-Start-Production.bat` builds and runs the single-server production mode on `:3000`.
+Practice (DEMO data in `data\demo.db`): `batch\1-Install.bat` → `batch\2-Seed-Database.bat` → `batch\3-Start-Dev.bat`. The browser opens automatically.
+
+Real shop (`data\dp-erp.db`): `batch\8-Init-Production.bat` once (see `docs/PRODUCTION-SETUP.md`), then `4-Start-Production.bat` builds and runs the single-server production mode on `:3000` with a nightly backup (`docs/BACKUP.md`).
 
 `5-Start-Hidden.bat` does the same as 4 but with **no console window** (waits ~15s for the build, then opens the browser). Because there's no window to close, stop it with `6-Stop-Hidden.bat`.
 
@@ -14,9 +16,16 @@ Requires Node.js LTS (`winget install OpenJS.NodeJS.LTS`).
 
 ```bash
 npm install
-npm run db:migrate   # creates ./data/dp-erp.db
-npm run db:seed      # realistic shop data
-npm run dev          # client on :5173 (proxies /api), server on :3000
+npm run db:seed                       # DEMO data into ./data/demo.db (labeled demo)
+DB_PATH=./data/demo.db npm run dev     # client on :5173 (proxies /api), server on :3000
+```
+
+Database scripts (all read `DB_PATH`; the server default is `./data/dp-erp.db`):
+
+```bash
+npm run db:init-prod                   # clean PRODUCTION db: one admin, no sample data (refuses if the file has data)
+npm run db:backup                      # verified VACUUM INTO copy into BACKUP_DIR (default: backups/ next to the db) + rotation
+npm run db:restore -- <backup-file>    # app must be stopped; current db is set aside, never deleted
 ```
 
 ## Project layout

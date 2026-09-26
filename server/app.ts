@@ -6,7 +6,7 @@ import { customerRoutes } from './modules/customers/index.js';
 import { jobRoutes } from './modules/jobs/index.js';
 import { paymentRoutes } from './modules/payments/index.js';
 import { inventoryRoutes, cycleCountRoutes, locationRoutes, categoryRoutes, supplierRoutes } from './modules/inventory/index.js';
-import { settingsRoutes } from './modules/settings/index.js';
+import { settingsRoutes, getSetting } from './modules/settings/index.js';
 import { userRoutes } from './modules/users/index.js';
 import { auditRoutes } from './modules/audit/index.js';
 
@@ -29,10 +29,13 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   app.decorateRequest('user', null);
   app.addHook('onRequest', authHook);
 
+  // Public. `dataset` ('demo' | 'production' | null = unlabeled, ADR 0008)
+  // drives the client's DEMO DATA banner.
   app.get('/api/health', async () => ({
     ok: true,
     app: 'decals-plus-shop-manager',
     time: new Date().toISOString(),
+    dataset: await getSetting('dataset'),
   }));
 
   await app.register(authRoutes);
