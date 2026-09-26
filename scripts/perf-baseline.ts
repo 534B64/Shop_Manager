@@ -111,7 +111,7 @@ for (const probe of PROBES) {
     try {
       const j = JSON.parse(body.toString('utf8'));
       if (Array.isArray(j)) rows = String(j.length);
-      else if (Array.isArray(j?.rows)) rows = `${j.rows.length} of ${j.total}`;
+      else if (Array.isArray(j?.rows)) rows = j.total != null ? `${j.rows.length} of ${j.total}` : String(j.rows.length);
     } catch { /* not JSON */ }
   }
   results.push({ probe, ms: median(times), kb: body.length / 1024, rows, status: last.statusCode });

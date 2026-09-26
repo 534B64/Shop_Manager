@@ -161,3 +161,24 @@ builders move the Inventory and Quick Order pages to `?limit=` — then nothing 
 the full table. (Reorder "before" is the original 2026-09-25 number; Phase 2 didn't re-list it.)
 Still open: `/api/balances` (15 ms, 59 KB) and the dashboard's `/api/jobs?limit=200` (122 KB) — a
 server-side "due soon" / "owing" query would shrink both.
+
+## After wave 1 merge (2026-09-26)
+
+Fresh seed (`DB_PATH=/tmp/perf-int.db npm run db:seed:perf`) on the merged `team/integrate`
+(ops + POS + UI foundation + the wave 1 fixes), same script. Compared with the best earlier column
+for each probe:
+
+| Endpoint | Before ms | Wave 1 ms | Note |
+|---|---:|---:|---|
+| `/api/dashboard` | 1.5 (UI) | 1.3 | SQL summary kept through the merge |
+| `/api/inventory/valuation` | 2.0 (UI) | 1.7 | |
+| `/api/inventory?limit=50` | 2.0 (UI) | 1.9 | paged probes all 1.5–5.9 ms, as before |
+| `/api/inventory` (unpaged) | 74.0 (3) | 68.0 | run-to-run spread |
+| `/api/invoices?limit=50` | 1.2 (3) | 1.2 | |
+| `/api/drawer?limit=50` | 0.8 (3) | 1.0 | |
+| `/api/balances` | 16.6 (3) | 15.0 | still the unpaged one to watch |
+| `/api/payments` | 1.5 (3) | 1.4 | |
+
+**No regression from the merge.** The wave 1 fixes touch write paths only (void/return/refund
+guards, one extra `SUM` over `returns` when voiding); no GET got slower. `scripts/perf-baseline.ts`
+now shows keyset pages (`{rows, nextBefore}`) as a plain row count instead of "50 of undefined".
