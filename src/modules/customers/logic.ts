@@ -18,16 +18,29 @@ const INACTIVE_DAYS = 30;
 export interface ProfileInput { name: string; email: string; phone: string; notes: string }
 export type ProfileErrors = Partial<Record<keyof ProfileInput, string>>;
 
-/** Field errors for a customer form. Email is required except for Walk-in. */
-export function profileErrors(p: ProfileInput): ProfileErrors {
+/**
+ * Field errors for a customer form. Email is required except for Walk-in — on an
+ * edit only when the customer already had one or the email field was touched
+ * (older customers without an email can still get a phone or note fixed).
+ */
+export function profileErrors(p: ProfileInput, requireEmail = true): ProfileErrors {
   const e: ProfileErrors = {};
   const name = p.name.trim();
   if (!name) e.name = 'Name is required.';
   const email = p.email.trim();
-  if (name !== WALK_IN && !email) e.email = 'Email is required (only the Walk-in record may go without).';
+  if (requireEmail && name !== WALK_IN && !email) e.email = 'Email is required (only the Walk-in record may go without).';
   else if (email && !isValidEmail(email)) e.email = 'Email must contain @ and a dot.';
   if (p.phone.trim() && !isValidPhone(p.phone)) e.phone = 'Phone must be 10 digits.';
   return e;
+}
+
+/** The trimmed fields that differ from `before` — an edit sends only these. */
+export function changedFields(before: ProfileInput, after: ProfileInput): Partial<ProfileInput> {
+  const out: Partial<ProfileInput> = {};
+  for (const k of ['name', 'email', 'phone', 'notes'] as const) {
+    if (after[k].trim() !== before[k].trim()) out[k] = after[k].trim();
+  }
+  return out;
 }
 
 /** No purchase in 30 days (or ever). */

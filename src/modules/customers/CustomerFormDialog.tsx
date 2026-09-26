@@ -3,7 +3,7 @@ import { Button, Dialog, TextField } from '../../components/m3';
 import { post, put } from '../../lib/api';
 import { formatPhone } from '../../lib/format';
 import { errorText } from '../../lib/errorText';
-import { profileErrors, WALK_IN, type ProfileInput } from './logic';
+import { changedFields, profileErrors, WALK_IN, type ProfileInput } from './logic';
 import type { Customer } from '../../lib/types';
 
 const blank: ProfileInput = { name: '', email: '', phone: '', notes: '' };
@@ -16,24 +16,32 @@ export default function CustomerFormDialog({ open, onClose, customer, onSaved }:
 }) {
   const [form, setForm] = useState<ProfileInput>(blank);
   const [tried, setTried] = useState(false);
+  const [emailTouched, setEmailTouched] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    if (open) { setForm(customer ? fromCustomer(customer) : blank); setTried(false); setError(null); }
+    if (open) { setForm(customer ? fromCustomer(customer) : blank); setTried(false); setEmailTouched(false); setError(null); }
   }, [open, customer]);
 
-  const errs = tried ? profileErrors(form) : {};
-  const set = (k: keyof ProfileInput) => (e: React.ChangeEvent<HTMLInputElement>) =>
+  // New customers always need an email; an edit only when they had one or it was touched.
+  const requireEmail = !customer || !!customer.email || emailTouched;
+  const errs = tried ? profileErrors(form, requireEmail) : {};
+  const set = (k: keyof ProfileInput) => (e: React.ChangeEvent<HTMLInputElement>) => {
+    if (k === 'email') setEmailTouched(true);
     setForm({ ...form, [k]: k === 'phone' ? formatPhone(e.target.value) : e.target.value });
+  };
 
   async function save() {
     setTried(true);
-    if (Object.keys(profileErrors(form)).length) return;
-    setBusy(true); setError(null);
+    if (Object.keys(profileErrors(form, requireEmail)).length) return;
     const body = { name: form.name.trim(), email: form.email.trim(), phone: form.phone.trim(), notes: form.notes.trim() };
+    // An edit sends only what changed, so an untouched missing email isn't re-checked.
+    const changes = customer ? changedFields(fromCustomer(customer), form) : {};
+    if (customer && !Object.keys(changes).length) { onClose(); return; }
+    setBusy(true); setError(null);
     try {
       const row = customer
-        ? await put<Customer>(`/api/customers/${customer.id}`, body)
+        ? await put<Customer>(`/api/customers/${customer.id}`, changes)
         : await post<Customer>('/api/customers', Object.fromEntries(Object.entries(body).filter(([, v]) => v !== '')));
       onSaved(row);
       onClose();

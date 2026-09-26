@@ -106,13 +106,26 @@ export async function customerRoutes(app: FastifyInstance) {
     return withTx(async (tx) => {
       const [before] = await tx.select().from(customers).where(eq(customers.id, id));
       if (!before) return reply.code(404).send({ error: 'Customer not found' });
-      // An edit touching name or email can't leave the email blank or invalid
-      // (Walk-in excepted). Older customers without one can still edit phone/notes.
-      const b = req.body as { name?: string; email?: string };
-      if ((b.name !== undefined || b.email !== undefined) && !emailOk(b.name ?? before.name, b.email ?? before.email)) {
+      // Email on an edit (2026-07-02 rule is for NEW customers): a sent email must
+      // be valid, and an existing email can't be cleared (Walk-in excepted). An
+      // older customer without one can still have name / phone / notes edited.
+      const b = { ...(req.body as { name?: string; email?: string; phone?: string; notes?: string }) };
+      const patch: Record<string, unknown> = { ...b };
+      if (b.email !== undefined) {
+        const email = b.email.trim();
+        const name = (b.name ?? before.name).trim();
+        if (!email && before.email && name !== 'Walk-in') {
+          return reply.code(400).send({ error: 'This customer has an email — it can be changed but not removed.' });
+        }
+        if (email && !emailOk('', email)) return reply.code(400).send({ error: 'Email must look like name@example.com.' });
+        patch.email = email || null;
+      }
+      // Renaming the Walk-in record into a real customer brings the email rule with it.
+      const newName = (b.name ?? before.name).trim();
+      if (before.name === 'Walk-in' && newName !== 'Walk-in' && !emailOk(newName, (patch.email ?? before.email) as string | null)) {
         return reply.code(400).send({ error: 'An email address is required (only Walk-in may go without).' });
       }
-      const [row] = await tx.update(customers).set(req.body as object).where(eq(customers.id, id)).returning();
+      const [row] = await tx.update(customers).set(patch).where(eq(customers.id, id)).returning();
       await audit(tx, req, { action: 'customer.update', entity: 'customer', entityId: id, before, after: row });
       return row;
     });

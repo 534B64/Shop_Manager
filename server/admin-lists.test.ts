@@ -108,6 +108,21 @@ describe('PUT /api/customers/:id email rule', () => {
     // Renaming the Walk-in record to a real name needs an email.
     expect((await put(ids['Walk-in'], { name: 'Real Person' })).statusCode).toBe(400);
   });
+
+  it('a legacy customer without an email can still have name / phone / notes edited', async () => {
+    const { db } = await import('./db/index.js');
+    const { customers } = await import('./db/schema/index.js');
+    const [legacy] = await db.insert(customers).values({ name: 'Old Timer' }).returning();
+    const put = (payload: object) => inject({ method: 'PUT', url: `/api/customers/${legacy.id}`, payload });
+    expect((await put({ phone: '555-123-4567' })).statusCode).toBe(200);
+    expect((await put({ notes: 'pays cash' })).statusCode).toBe(200);
+    expect((await put({ name: 'Old Timer Sr' })).statusCode).toBe(200);
+    expect((await put({ email: '' })).statusCode).toBe(200); // nothing to clear
+    expect((await put({ email: 'bad' })).statusCode).toBe(400);
+    const ok = await put({ email: 'old@timer.example' });
+    expect(ok.json()).toMatchObject({ name: 'Old Timer Sr', phone: '555-123-4567', notes: 'pays cash', email: 'old@timer.example' });
+    expect((await put({ email: '' })).statusCode).toBe(400); // once set, it can't be removed
+  });
 });
 
 describe('GET /api/approvals', () => {

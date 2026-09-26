@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { profileErrors, isInactive, creditDelta, jobsTotal } from './logic';
+import { profileErrors, changedFields, isInactive, creditDelta, jobsTotal } from './logic';
 import type { Job } from '../../lib/types';
 
 const base = { name: 'Acme', email: 'a@acme.co', phone: '', notes: '' };
@@ -13,6 +13,16 @@ describe('profileErrors', () => {
   });
   it('exempts the Walk-in record from the email rule', () => {
     expect(profileErrors({ ...base, name: 'Walk-in', email: '' })).toEqual({});
+  });
+  it('on an edit of a customer without an email, the email is optional unless touched', () => {
+    const legacy = { ...base, email: '' };
+    expect(profileErrors(legacy, false)).toEqual({});
+    expect(profileErrors({ ...legacy, email: 'nope' }, false).email).toMatch(/@/);
+    expect(profileErrors(legacy, true).email).toMatch(/required/);
+  });
+  it('an edit sends only the changed, trimmed fields', () => {
+    expect(changedFields(base, { ...base, phone: ' 555-123-4567 ' })).toEqual({ phone: '555-123-4567' });
+    expect(changedFields(base, { ...base, name: 'Acme ' })).toEqual({});
   });
   it('checks phone digits only when given', () => {
     expect(profileErrors({ ...base, phone: '555-1234' }).phone).toBeTruthy();
