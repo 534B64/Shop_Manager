@@ -104,7 +104,7 @@ describe('cash + drawer helpers', () => {
         { number: 7, subtotalCents: 3000, taxCents: 248, discountCents: 0, totalCents: 3248 },
         { number: 8, subtotalCents: 4000, taxCents: 0, discountCents: 0, totalCents: 4000 },
       ],
-      voids: [{ invoiceTotalCents: 4000, invoiceTaxCents: 0, refundCents: 4000 }],
+      voids: [{ netTotalCents: 4000, netTaxCents: 0, refundCents: 4000 }],
       returns: [{ totalCents: 500, taxCents: 38, refundCents: 500 }],
       countedCashCents: 11950,
       countedChecksCents: 1500,

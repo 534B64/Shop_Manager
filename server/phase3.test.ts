@@ -509,3 +509,109 @@ describe('listing + database guards', () => {
     await expect(dbm.db.run(sql`update payments set drawer_session_id = null where drawer_session_id is not null`)).rejects.toThrow(/immutable/);
   });
 });
+
+describe('wave 1 fixes: voids after returns, refund + payment-void guards', () => {
+  const openFresh = async () => {
+    await as(manager)({ method: 'POST', url: '/api/drawer/close', payload: { countedCashCents: 0 } });
+    const open = await inject({ method: 'POST', url: '/api/drawer/open', payload: { openingFloatCents: 0 } });
+    expect(open.statusCode).toBe(201);
+    return open.json() as { id: number };
+  };
+
+  it('Z-report: a void after a return counts only what the void cancelled (net sales 0, net tax 0)', async () => {
+    await openFresh();
+    const s = (await sale({ title: 'Five signs', lines: [{ description: 'Sign', qty: 5, unitPriceCents: 2000, taxable: true }], amountCents: undefined })).json();
+    const line = (await detail(s.invoice.number)).lines[0];
+    expect(line).toMatchObject({ subtotalCents: 10000, taxCents: 825 });
+    const r = await inject({ method: 'POST', url: '/api/returns', payload: { clientRef: ref(), invoiceId: s.invoice.id,
+      reason: 'one extra', refundMethod: 'card', lines: [{ invoiceLineId: line.id, qty: 1 }] } });
+    expect(r.json()).toMatchObject({ totalCents: 2165, taxCents: 165 });
+    const v = await inject({ method: 'POST', url: `/api/invoices/${s.invoice.id}/void`, payload: { reason: 'cancelled' } });
+    expect(v.statusCode).toBe(201);
+    expect(v.json().void).toMatchObject({ netTotalCents: 10825 - 2165, netTaxCents: 825 - 165, refundCents: 10825 - 2165 });
+    const z = (await as(manager)({ method: 'POST', url: '/api/drawer/close', payload: { countedCashCents: 0 } })).json().zReport;
+    expect(z.sales).toMatchObject({ totalCents: 10825, taxCents: 825 });
+    expect(z.returns).toMatchObject({ totalCents: 2165, taxCents: 165 });
+    expect(z.voids).toMatchObject({ totalCents: 8660, taxCents: 660 });
+    expect(z.netSalesCents).toBe(0);
+    expect(z.netTaxCents).toBe(0);
+  });
+
+  it('a void after a damaged (not restocked) return puts back only what the customer still had', async () => {
+    await openFresh();
+    const item = await makeItem(10);
+    const s = (await sale({ title: 'Blanks', lines: [{ description: 'Blank', qty: 5, unitPriceCents: 500, inventoryItemId: item.id }], amountCents: undefined })).json();
+    expect(await itemCount(item.id)).toBe(5);
+    const line = (await detail(s.invoice.number)).lines[0];
+    const r = await inject({ method: 'POST', url: '/api/returns', payload: { clientRef: ref(), invoiceId: s.invoice.id,
+      reason: 'damaged', refundMethod: 'card', lines: [{ invoiceLineId: line.id, qty: 2, restock: false }] } });
+    expect(r.statusCode).toBe(201);
+    expect(await itemCount(item.id)).toBe(5);
+    const v = await inject({ method: 'POST', url: `/api/invoices/${s.invoice.id}/void`, payload: { reason: 'cancel rest' } });
+    expect(v.json().restocked).toEqual([{ inventoryItemId: item.id, qty: 3 }]);
+    expect(await itemCount(item.id)).toBe(8);
+  });
+
+  it('a return never restocks more than the sale took off the shelf', async () => {
+    const item = await makeItem(2);
+    const s = (await sale({ title: 'Short stock', lines: [{ description: 'Decal', qty: 5, unitPriceCents: 100, inventoryItemId: item.id }], amountCents: undefined })).json();
+    expect(await itemCount(item.id)).toBe(0); // the sale clamped at zero: it took 2
+    const line = (await detail(s.invoice.number)).lines[0];
+    expect(line.stockQty).toBe(2);
+    const r1 = await inject({ method: 'POST', url: '/api/returns', payload: { clientRef: ref(), invoiceId: s.invoice.id,
+      reason: 'x', refundMethod: 'card', lines: [{ invoiceLineId: line.id, qty: 3, restock: true }] } });
+    expect(r1.statusCode).toBe(201);
+    expect(r1.json().lines[0]).toMatchObject({ qty: 3, restockedQty: 2 });
+    expect(await itemCount(item.id)).toBe(2);
+    const r2 = await inject({ method: 'POST', url: '/api/returns', payload: { clientRef: ref(), invoiceId: s.invoice.id,
+      reason: 'x', refundMethod: 'card', lines: [{ invoiceLineId: line.id, qty: 2, restock: true }] } });
+    expect(r2.json().lines[0]).toMatchObject({ qty: 2, restockedQty: 0 });
+    expect(await itemCount(item.id)).toBe(2);
+  });
+
+  it('a $0 pickup takes no invoice number', async () => {
+    const job = await makeJob({ finalPriceCents: 0 });
+    for (const st of ['in_progress', 'done']) await inject({ method: 'PUT', url: `/api/jobs/${job.id}/status`, payload: { status: st } });
+    const before = await nextInvoiceNumber();
+    const up = await inject({ method: 'PUT', url: `/api/jobs/${job.id}/status`, payload: { status: 'picked_up' } });
+    expect(up.statusCode).toBe(200);
+    expect(await nextInvoiceNumber()).toBe(before);
+    expect((await inject({ method: 'GET', url: `/api/invoices?jobId=${job.id}` })).json().rows).toHaveLength(0);
+  });
+
+  it('POST /api/payments refuses a refund larger than what was paid', async () => {
+    const job = await makeJob({ finalPriceCents: 5000 });
+    await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 1000, method: 'card' } });
+    const over = await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 1500, method: 'card', kind: 'refund' } });
+    expect(over.statusCode).toBe(409);
+    expect(over.json().error).toMatch(/more than was paid/);
+    const ok = await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 1000, method: 'card', kind: 'refund' } });
+    expect(ok.statusCode).toBe(201);
+  });
+
+  it('payment void refuses return/void refunds and payments in a closed drawer', async () => {
+    await openFresh();
+    const s = (await sale({ amountCents: 3000 })).json();
+    const line = (await detail(s.invoice.number)).lines[0];
+    const r = (await inject({ method: 'POST', url: '/api/returns', payload: { clientRef: ref(), invoiceId: s.invoice.id,
+      reason: 'x', refundMethod: 'card', lines: [{ invoiceLineId: line.id, qty: 1 }] } })).json();
+    const retVoid = await inject({ method: 'POST', url: `/api/payments/${r.refunds[0].id}/void`, payload: { reason: 'oops' } });
+    expect(retVoid.statusCode).toBe(409);
+    expect(retVoid.json().error).toMatch(/issue a refund\/return instead/);
+
+    const s2 = (await sale({ amountCents: 1200 })).json();
+    const v = (await inject({ method: 'POST', url: `/api/invoices/${s2.invoice.id}/void`, payload: { reason: 'dup' } })).json();
+    expect((await inject({ method: 'POST', url: `/api/payments/${v.refunds[0].id}/void`, payload: { reason: 'oops' } })).statusCode).toBe(409);
+
+    const job = await makeJob({ finalPriceCents: 5000 });
+    const early = (await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 700, method: 'card' } })).json();
+    const kept = (await inject({ method: 'POST', url: '/api/payments', payload: { clientRef: ref(), jobId: job.id, amountCents: 800, method: 'card' } })).json();
+    expect(kept.drawerSessionId).not.toBeNull();
+    // While the drawer is open a payment can still be voided.
+    expect((await inject({ method: 'POST', url: `/api/payments/${early.id}/void`, payload: { reason: 'typo' } })).statusCode).toBe(200);
+    await as(manager)({ method: 'POST', url: '/api/drawer/close', payload: { countedCashCents: 0 } });
+    const late = await inject({ method: 'POST', url: `/api/payments/${kept.id}/void`, payload: { reason: 'typo' } });
+    expect(late.statusCode).toBe(409);
+    expect(late.json().error).toMatch(/closed drawer/);
+  });
+});

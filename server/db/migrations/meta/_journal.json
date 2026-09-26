@@ -120,6 +120,13 @@
       "when": 1790600000000,
       "tag": "0016_invoices_returns_drawer",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "6",
+      "when": 1790700000000,
+      "tag": "0017_void_net_totals",
+      "breakpoints": true
     }
   ]
 }

@@ -1,24 +1,12 @@
 import { useEffect, useRef, useState } from 'react';
 import { setApprovalPrompt, type Approval } from '../lib/api';
+import { ACTION_LABELS } from '../lib/approvalLabels';
 import { Button, Dialog, TextField } from './m3';
 
 // The one "Manager approval" dialog (ADR 0004). Mounted once in App; api.ts
 // opens it whenever the server answers 403 approval_required, then retries the
 // same request with the manager's name + PIN attached. Pages never build their
 // own approval prompt.
-
-const ACTION_LABELS: Record<string, string> = {
-  'payment.void': 'Void a payment',
-  'payment.refund': 'Record a refund',
-  'job.pickup_unpaid': 'Release an order with a balance due',
-  'job.delete': 'Remove an order',
-  'job.unarchive': 'Restore a removed order',
-  'customer.delete': 'Archive a customer',
-  'customer.unarchive': 'Restore an archived customer',
-  'customer.credit_adjust': 'Adjust store credit',
-  'inventory.adjust': 'Change a stock count',
-  'cycle_count.post': 'Approve & post a cycle count',
-};
 
 interface Pending { action: string; error?: string; resolve: (a: Approval | null) => void }
 

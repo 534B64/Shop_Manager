@@ -90,6 +90,9 @@ export const invoiceVoids = sqliteTable('invoice_voids', {
   invoiceId: integer('invoice_id').notNull().references(() => invoices.id),
   reason: text('reason').notNull(),
   refundCents: integer('refund_cents').notNull().default(0),
+  // What the void cancelled: invoice total/tax minus returns already taken (0017).
+  netTotalCents: integer('net_total_cents'),
+  netTaxCents: integer('net_tax_cents'),
   jobArchived: integer('job_archived', { mode: 'boolean' }).notNull().default(true),
   approvalId: integer('approval_id').references(() => approvals.id),
   drawerSessionId: integer('drawer_session_id').references(() => drawerSessions.id),

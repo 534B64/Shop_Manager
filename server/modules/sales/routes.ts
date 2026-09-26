@@ -261,9 +261,15 @@ export async function salesRoutes(app: FastifyInstance) {
         else plan = [{ method: positive.sort((a, b) => b.amountCents - a.amountCents)[0].method, amountCents: paidNet }];
       }
       const refundCents = plan.reduce((s, p) => s + p.amountCents, 0);
+      // What the void cancels = the invoice less returns already taken on it
+      // (those count as returns in the Z-report — never subtract them twice).
+      const rets = await tx.select({ total: salesReturns.totalCents, tax: salesReturns.taxCents })
+        .from(salesReturns).where(eq(salesReturns.invoiceId, id));
+      const netTotalCents = inv.totalCents - rets.reduce((s, r) => s + r.total, 0);
+      const netTaxCents = inv.taxCents - rets.reduce((s, r) => s + r.tax, 0);
       const drawer = await openDrawer(tx);
       const [v] = await tx.insert(invoiceVoids).values({
-        invoiceId: id, reason: body.reason, refundCents, jobArchived: !body.keepJob,
+        invoiceId: id, reason: body.reason, refundCents, netTotalCents, netTaxCents, jobArchived: !body.keepJob,
         approvalId: approver.approvalId, drawerSessionId: drawer?.id ?? null,
         createdBy: req.user!.name, userId: req.user!.id,
       }).returning();
@@ -275,14 +281,15 @@ export async function salesRoutes(app: FastifyInstance) {
           invoiceVoidId: v.id, approvalId: approver.approvalId }));
       }
 
-      // Stock back: what the sale deducted, less what returns already restocked.
+      // Stock back: what the sale deducted, less every unit already returned —
+      // restocked ones are back on the shelf, damaged ones stay off it.
       const lines = await tx.select().from(invoiceLines).where(eq(invoiceLines.invoiceId, id));
       const restocked = [];
       for (const l of lines) {
         if (l.inventoryItemId == null || l.stockQty <= 0) continue;
-        const [{ back }] = await tx.select({ back: sql<number>`coalesce(sum(${salesReturnLines.restockedQty}), 0)` })
+        const [{ returned }] = await tx.select({ returned: sql<number>`coalesce(sum(${salesReturnLines.qty}), 0)` })
           .from(salesReturnLines).where(eq(salesReturnLines.invoiceLineId, l.id));
-        const qty = l.stockQty - back;
+        const qty = Math.max(0, l.stockQty - Number(returned));
         if (qty <= 0) continue;
         const r = await recordReturn({ itemId: l.inventoryItemId, qty, source: { type: 'invoice_void', id: v.id },
           note: `Void of invoice ${String(inv.number).padStart(6, '0')}`, user: { id: req.user!.id, name: req.user!.name } }, tx);
@@ -345,7 +352,10 @@ export async function salesRoutes(app: FastifyInstance) {
         const value = returnLineRefund(line, already, rl.qty);
         if (!value) throw new SalesError(409, `Line ${line.lineNo}: can't return ${rl.qty} — ${line.qty - already} of ${line.qty} left to return`);
         if (rl.restock && line.inventoryItemId == null) throw new SalesError(400, `Line ${line.lineNo} isn't a stock item — it can't be restocked`);
-        return { line, qty: rl.qty, restock: !!rl.restock, value };
+        // Never restock more than the sale took off the shelf (a sale clamps at
+        // zero stock, so stockQty can be below qty) less what came back before.
+        const restockQty = rl.restock ? Math.min(rl.qty, Math.max(0, line.stockQty - already)) : 0;
+        return { line, qty: rl.qty, restock: !!rl.restock, restockQty, value };
       });
       const sum = (f: (p: typeof planned[number]) => number) => planned.reduce((s, p) => s + f(p), 0);
       const totalCents = sum((p) => p.value.totalCents);
@@ -374,13 +384,13 @@ export async function salesRoutes(app: FastifyInstance) {
         createdBy: req.user!.name, userId: req.user!.id,
       }).returning();
       await tx.insert(salesReturnLines).values(planned.map((p) => ({
-        returnId: ret.id, invoiceLineId: p.line.id, qty: p.qty, restock: p.restock, restockedQty: p.restock ? p.qty : 0,
+        returnId: ret.id, invoiceLineId: p.line.id, qty: p.qty, restock: p.restock, restockedQty: p.restockQty,
         subtotalCents: p.value.subtotalCents, taxCents: p.value.taxCents, discountCents: p.value.discountCents,
         totalCents: p.value.totalCents,
       })));
       // Restock only the lines marked restockable (damaged goods stay off the shelf).
-      for (const p of planned.filter((x) => x.restock)) {
-        const r = await recordReturn({ itemId: p.line.inventoryItemId!, qty: p.qty, source: { type: 'return', id: ret.id },
+      for (const p of planned.filter((x) => x.restockQty > 0)) {
+        const r = await recordReturn({ itemId: p.line.inventoryItemId!, qty: p.restockQty, source: { type: 'return', id: ret.id },
           note: `Return #${ret.id} on invoice ${String(inv.number).padStart(6, '0')}`, user: { id: req.user!.id, name: req.user!.name } }, tx);
         await audit(tx, req, { action: 'inventory.return', entity: 'inventory_item', entityId: p.line.inventoryItemId,
           before: { count: r.before.count }, after: { count: r.item.count, txnId: r.txn.id, returnId: ret.id } });

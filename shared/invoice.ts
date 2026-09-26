@@ -145,7 +145,9 @@ export function parseInvoiceNumber(s: string): number | null {
 
 export interface ZPayment { method: string; kind: string; amountCents: number; voided: boolean }
 export interface ZInvoice { number: number; subtotalCents: number; taxCents: number; discountCents: number; totalCents: number }
-export interface ZVoid { invoiceTotalCents: number; invoiceTaxCents: number; refundCents: number }
+/** A void counts what it cancelled: the invoice total/tax minus returns already
+ *  taken on it (those are in `returns`), so nothing is subtracted twice. */
+export interface ZVoid { netTotalCents: number; netTaxCents: number; refundCents: number }
 export interface ZReturn { totalCents: number; taxCents: number; refundCents: number }
 
 export interface ZReportInput {
@@ -203,8 +205,8 @@ export function buildZReport(input: ZReportInput): ZReport {
     discountCents: sum(input.invoices, (i) => i.discountCents),
     totalCents: sum(input.invoices, (i) => i.totalCents),
   };
-  const voids = { count: input.voids.length, totalCents: sum(input.voids, (v) => v.invoiceTotalCents),
-    taxCents: sum(input.voids, (v) => v.invoiceTaxCents), refundCents: sum(input.voids, (v) => v.refundCents) };
+  const voids = { count: input.voids.length, totalCents: sum(input.voids, (v) => v.netTotalCents),
+    taxCents: sum(input.voids, (v) => v.netTaxCents), refundCents: sum(input.voids, (v) => v.refundCents) };
   const returns = { count: input.returns.length, totalCents: sum(input.returns, (r) => r.totalCents),
     taxCents: sum(input.returns, (r) => r.taxCents), refundCents: sum(input.returns, (r) => r.refundCents) };
   const cashNet = byMethod.cash?.netCents ?? 0;

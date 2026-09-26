@@ -282,7 +282,8 @@ export async function jobRoutes(app: FastifyInstance) {
       await audit(tx, req, { action: 'job.status', entity: 'job', entityId: id,
         before: { status: job.status }, after: patch, approvalId });
       // Picked up = sold: issue the invoice now if paying in full hasn't already.
-      if (to === 'picked_up') {
+      // A $0 job (warranty redo, freebie) takes no invoice number.
+      if (to === 'picked_up' && (job.totalCents ?? job.finalPriceCents ?? 0) > 0) {
         const drawer = await openDrawer(tx);
         await invoiceJob(tx, req, id, drawer?.id ?? null);
       }

@@ -180,7 +180,8 @@ export async function computeZReport(d: Drawer, counted: { cash: number | null; 
     payments: pays.map((p) => ({ method: p.method, kind: p.kind, amountCents: p.amountCents, voided: !!p.voidedAt })),
     invoices: invs.map((i) => ({ number: i.number, subtotalCents: i.subtotalCents, taxCents: i.taxCents,
       discountCents: i.discountCents, totalCents: i.totalCents })),
-    voids: voids.map((v) => ({ invoiceTotalCents: v.total, invoiceTaxCents: v.tax, refundCents: v.v.refundCents })),
+    voids: voids.map((v) => ({ netTotalCents: v.v.netTotalCents ?? v.total, netTaxCents: v.v.netTaxCents ?? v.tax,
+      refundCents: v.v.refundCents })),
     returns: rets.map((r) => ({ totalCents: r.totalCents, taxCents: r.taxCents, refundCents: r.refundCents })),
     countedCashCents: counted.cash, countedChecksCents: counted.checks,
   });

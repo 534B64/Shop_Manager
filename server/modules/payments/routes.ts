@@ -1,8 +1,8 @@
 import type { FastifyInstance } from 'fastify';
 import { eq, desc, sql, isNull } from 'drizzle-orm';
 import { db, withTx } from '../../db/index.js';
-import { payments, jobs, customers, customerCredits, invoices, invoiceVoids, salesReturns } from '../../db/schema/index.js';
-import { recordPayment, PaymentError } from './service.js';
+import { payments, jobs, customers, customerCredits, invoices, invoiceVoids, salesReturns, drawerSessions } from '../../db/schema/index.js';
+import { recordPayment, paidNetCents, PaymentError } from './service.js';
 import { invoiceIfSettled, SalesError } from '../sales/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
 import { audit } from '../audit/index.js';
@@ -73,6 +73,11 @@ export async function paymentRoutes(app: FastifyInstance) {
         // wifi retry of an approved refund never asks twice or logs twice).
         let approvalId: number | null = null;
         if (kind === 'refund') {
+          // Never hand back more than the job has actually been paid.
+          const paid = await paidNetCents(job.id, tx);
+          if (body.amountCents > paid) {
+            return reply.code(409).send({ error: `Refund is more than was paid on this job (${(paid / 100).toFixed(2)})` });
+          }
           const approver = await requireApproval(req, reply, { action: 'payment.refund', entity: 'job', entityId: job.id,
             reason: body.note ?? null, details: { amountCents: body.amountCents, method: body.method, clientRef: body.clientRef } });
           if (!approver) return reply;
@@ -106,6 +111,18 @@ export async function paymentRoutes(app: FastifyInstance) {
       const [p] = await tx.select().from(payments).where(eq(payments.id, id));
       if (!p) return reply.code(404).send({ error: 'Payment not found' });
       if (p.voidedAt) return reply.code(409).send({ error: 'Already voided' });
+      // A refund made by a return or an invoice void belongs to that record,
+      // and money in a closed (counted) drawer is final — correct either with
+      // a new refund/return instead.
+      if (p.returnId != null || p.invoiceVoidId != null) {
+        return reply.code(409).send({ error: 'This refund belongs to a return or invoice void — it can’t be voided; issue a refund/return instead' });
+      }
+      if (p.drawerSessionId != null) {
+        const [d] = await tx.select({ status: drawerSessions.status }).from(drawerSessions).where(eq(drawerSessions.id, p.drawerSessionId));
+        if (d?.status === 'closed') {
+          return reply.code(409).send({ error: 'This payment is in a closed drawer — it can’t be voided; issue a refund/return instead' });
+        }
+      }
       const approver = await requireApproval(req, reply, { action: 'payment.void', entity: 'payment', entityId: p.id,
         reason, details: { jobId: p.jobId, amountCents: p.amountCents, kind: p.kind, method: p.method } });
       if (!approver) return reply;
