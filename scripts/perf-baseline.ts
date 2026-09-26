@@ -27,9 +27,9 @@ interface Probe {
 // Every page's real first-load URLs (wave 2 pages, as src/ fetches them). The
 // few "unpaginated" rows are small configuration tables (materials, categories,
 // suppliers, locations, users) — no page loads a big table whole any more.
-const today = new Date().toISOString().slice(0, 10);
+const now = new Date(); // the shop's local day, as the pages send it
+const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
 const monthStart = `${today.slice(0, 8)}01`;
-const midnight = new Date(new Date().setHours(0, 0, 0, 0)).toISOString();
 const PROBES: Probe[] = [
   // Dashboard
   { page: 'Dashboard', url: '/api/dashboard', note: 'low-stock top 20 + count in SQL' },
@@ -43,7 +43,7 @@ const PROBES: Probe[] = [
   { page: 'Orders (board, search)', url: '/api/jobs/board?limit=20&q=decal' },
   { page: 'Orders (list)', url: '/api/jobs?limit=25&offset=0' },
   { page: 'Orders (list, no hit)', url: '/api/jobs?limit=25&offset=0&q=zzzz-nohit', note: 'worst case: scans every job' },
-  { page: 'Quick Order', url: `/api/reports/summary?from=${encodeURIComponent(midnight)}`, note: 'today total, SQL range' },
+  { page: 'Quick Order', url: `/api/reports/summary?from=${today}&to=${today}`, note: 'today total (local day), SQL range' },
   { page: 'Quick Order', url: '/api/payments?limit=12&offset=0' },
   { page: 'Quick Order', url: '/api/customers?q=Walk-in&limit=10&offset=0' },
   { page: 'Quick Order / POS', url: '/api/inventory?limit=8&offset=0&q=red', note: 'stock picker' },

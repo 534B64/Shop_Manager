@@ -128,7 +128,9 @@ used in code, docs, or conversation, it means exactly this.
   never keeps card numbers. For cash, what was handed over and the change
   given are recorded too. Money rows are never erased.
 - **Refund** — money handed back to a customer, in the same ledger as
-  payments. A refund made because of a void or a return points at it.
+  payments. A refund made because of a void or a return points at it. A
+  refund over the shop's refund threshold needs a manager — one threshold for
+  a plain refund and for a return.
 - **Invoice** — the locked record of a sale: what was sold, at what price,
   with what tax and discount, to whom. Made when a Job is paid in full or
   picked up, or at once for a counter sale. Once a Job has an invoice, its
@@ -140,15 +142,22 @@ used in code, docs, or conversation, it means exactly this.
   fails doesn't use one up.
 - **Line tax** — sales tax worked out and kept on each invoice line at the
   moment of sale, with the rate used; the invoice's tax is the sum of its
-  lines.
+  lines. Counter sales are taxed unless a line is marked not taxable or the
+  whole sale is a tax exempt sale.
+- **Tax exempt sale** — a counter sale rung up with no sales tax at all
+  because the customer doesn't owe it (reselling the goods, a nonprofit, a
+  government buyer). The cashier must say why; the reason stays with the
+  invoice and in the audit history. Not the same as one untaxed line (e.g.
+  labor), which is simply not taxable.
 - **Void** — two different things, always say which:
   1. **Payment void** — marking one payment or refund row as entered by
      mistake (reason required). The row stays on the books and stops counting.
   2. **Invoice void** — cancelling a whole sale (manager approval, reason).
      The invoice stays exactly as it was; a separate void record points at it,
      what the customer paid is refunded, and any stock the sale took goes back
-     on the shelf. The order is removed, or — when kept — can be corrected and
-     invoiced again under a new number.
+     on the shelf. Voiding a counter sale removes its order; voiding a regular
+     job's invoice keeps the order open so it can be corrected and invoiced
+     again under a new number (either can be chosen the other way).
 - **Return** — goods coming back against an invoice (an RMA): which lines and
   how many, never more than were sold minus what already came back. Each
   returned line is marked **restock** (back on the shelf) or not (damaged).
@@ -161,9 +170,9 @@ used in code, docs, or conversation, it means exactly this.
 - **Balance** — derived, never stored: after-tax total − returned goods − live
   payments + live refunds. Overpayment warns but is allowed.
 - **Drawer session** — one stretch of the cash drawer's life: opened by
-  counting the starting cash (the float), closed by counting it again. All
-  cash taken or handed back happens inside an open session; without one the
-  shop can't take cash. One drawer is open at a time. Closing needs a manager.
+  counting the starting cash (the float), closed by counting it again. Every
+  payment and refund — cash, card, check, store credit or other — happens
+  inside an open session; without one the shop can't take or hand back money. One drawer is open at a time. Closing needs a manager.
 - **Over/short** — at drawer close, the counted cash minus what should be
   there (float + cash taken − cash refunded). Positive is over, negative is
   short.

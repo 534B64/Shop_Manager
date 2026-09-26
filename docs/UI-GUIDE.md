@@ -114,7 +114,7 @@ Keyset-paged, newest first — `?limit=&before=<id>` → `{ rows, nextBefore }` 
 
 Single-call summaries (added up in SQL, never walked in the browser): `/api/dashboard`, `/api/jobs/board`
 (every lane's first `limit` + counts), `/api/jobs/due-soon`, `/api/inventory/valuation`,
-`/api/reports/summary?from&to` (payments; `from` may be a full timestamp, e.g. local midnight),
+`/api/reports/summary?from&to` (payments; a plain `YYYY-MM-DD` is the shop's local day on every date filter — send local dates from `todayIso`/`lastDays`, never `toISOString().slice(0, 10)`),
 `/api/reports/sales?from&to` (manager+, invoices/voids/returns — the Z-report rule).
 
 ### Shared hooks and helpers
@@ -127,6 +127,8 @@ Single-call summaries (added up in SQL, never walked in the browser): `/api/dash
 | `components/ConfirmDialog.tsx` | yes/no dialog (never `window.confirm/prompt/alert`); shows the error inline, ignores a cancelled approval |
 | `components/DateRangeFields.tsx` | From/To date pair (`DateRange`), used by Reports, invoices, returns, audit |
 | `lib/errorText.ts` | `errorText(e, fallback)` (the one error-to-words function), `approvalCancelled`, `isDrawerClosed`, `lockedInvoice`, `isNetworkError` |
+| `modules/pos/lib/TaxExemptField.tsx` | the sale-level Tax exempt switch + reason (reason chips, free text); `/pos` and `/quick`. Pair it with `cartTotals`/`quickTotals` (both `priceCounterSale`) so the preview equals the invoice |
+| drawer prompt | every tender needs an open drawer (409 `drawer_closed`, `isDrawerClosed`): show `OpenDrawerForm compact` inline — counter, Quick Order, Record payment, Refund — don't send people to another page |
 | `lib/ref.ts` | `newRef()` for every `clientRef` / client id — `crypto.randomUUID` does not exist on the shop's plain-http LAN origin, so it falls back to `getRandomValues` |
 | `DataTable` `groupOf` / `renderGroup` / `hideRow` | header rows where the group key changes (inventory group-by) |
 

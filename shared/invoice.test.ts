@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
-  allocate, priceInvoice, lineTaxCents, taxForTotal, returnLineRefund, refundDueCents,
+  allocate, priceInvoice, priceCounterSale, taxExemptReason, lineTaxCents, taxForTotal, returnLineRefund, refundDueCents,
   changeCents, overShortCents, formatInvoiceNumber, parseInvoiceNumber, buildZReport,
 } from './invoice';
 import { grandTotalCents } from './priceVerify';
@@ -116,5 +116,24 @@ describe('cash + drawer helpers', () => {
     expect(z.sales).toMatchObject({ invoiceCount: 2, firstNumber: '000007', lastNumber: '000008', taxCents: 248 });
     expect(z.netSalesCents).toBe(7248 - 4000 - 500);
     expect(z.netTaxCents).toBe(248 - 38);
+  });
+});
+
+describe('counter sale tax (D10)', () => {
+  it('taxes lines by default; taxable:false or a sale default opts out; exempt taxes nothing', () => {
+    const lines = [{ qty: 2, subtotalCents: 2000 }, { qty: 1, subtotalCents: 999, taxable: false }];
+    expect(priceCounterSale(lines, 8.25).lines.map((l) => l.taxCents)).toEqual([165, 0]);
+    expect(priceCounterSale(lines, 8.25, { defaultTaxable: false }).taxCents).toBe(0);
+    expect(priceCounterSale([{ qty: 1, subtotalCents: 2000, taxable: true }], 8.25, { taxExempt: true }))
+      .toMatchObject({ taxCents: 0, totalCents: 2000 });
+    expect(priceCounterSale(lines, 8.25)).toEqual(priceInvoice([{ qty: 2, subtotalCents: 2000, taxable: true },
+      { qty: 1, subtotalCents: 999, taxable: false }], 8.25, 0));
+  });
+
+  it('accepts a short trimmed exemption reason', () => {
+    expect(taxExemptReason(' Nonprofit ')).toBe('Nonprofit');
+    expect(taxExemptReason('ab')).toBeNull();
+    expect(taxExemptReason(undefined)).toBeNull();
+    expect(taxExemptReason('x'.repeat(121))).toBeNull();
   });
 });

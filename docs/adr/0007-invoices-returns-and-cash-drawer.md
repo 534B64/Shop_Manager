@@ -105,7 +105,7 @@ returns already taken (migration `0017`) — and the Z-report subtracts that, so
 a return followed by a void is never counted twice. By default the job
 is archived (the sale is cancelled, so it leaves the owed list);
 `keepJob: true` leaves it open, unlocked, to be corrected and re-invoiced under
-a new number.
+a new number. (Default changed by owner decision D11 below.)
 
 ### Return (RMA)
 
@@ -121,9 +121,10 @@ the balance. **Balance** is now after-tax total − returned value − live
 payments + live refunds (`owedCents` in payments). A return whose value is
 over `posSettings.refundApprovalThresholdCents` (default 5000, admin,
 `PUT /api/settings/pos`) needs manager approval (`return.refund`); at or under
-it a cashier does it alone. The existing bare refund (`POST /api/payments`
-kind `refund`) still always needs approval, and is refused (409) when it is more
-than the job has been paid (`paidNetCents`). A payment row can't be voided when
+it a cashier does it alone. The bare refund (`POST /api/payments`
+kind `refund`) is refused (409) when it is more than the job has been paid
+(`paidNetCents`); since D13 below it follows the same threshold instead of
+always needing approval. A payment row can't be voided when
 it is a return's or void's refund, or when its drawer session is closed — issue
 a refund/return instead.
 
@@ -142,8 +143,8 @@ always possible, just approved and logged (approvals row + audit row).
 `POST /api/drawer/open` (anyone, counted float) → one open session per
 register. Every payment/refund row written while a drawer is open is attached
 to it; **cash with no open drawer is refused (409, `code: 'drawer_closed'`)**
-everywhere — payments, counter sale, void and return refunds. Card/check need
-no drawer. `POST /api/drawer/close` (manager+) takes counted cash (and
+everywhere — payments, counter sale, void and return refunds. (Since D12
+below this covers every tender, not just cash.) `POST /api/drawer/close` (manager+) takes counted cash (and
 optionally checks), computes expected cash = float + cash payments − cash
 refunds (voided rows excluded), over/short = counted − expected, and freezes
 the **Z-report** (by-tender totals, sales/tax/discounts, voids, returns,
@@ -180,8 +181,8 @@ ES-module cycle is safe.
   gets a daily over/short. Card/check payments with no drawer open aren't in
   any Z-report.
 - `/api/balances` now skips archived jobs and subtracts returns.
-- Quick Order still adds no tax unless the request says `taxable: true`
-  (flagged for the owner).
+- ~~Quick Order still adds no tax unless the request says `taxable: true`~~ —
+  decided by the owner: counter sales are taxed by default (D10 below).
 - Not built: invoice/receipt printing, credit-memo numbering for returns,
   exchanges, per-line tax categories, multi-register, split tender on a counter
   sale (pay the rest through `/api/payments`), UI (next phase).
@@ -195,3 +196,56 @@ ES-module cycle is safe.
   retroactively — invoice numbering starts at go-live. `POST /api/invoices`
   can invoice one by hand if it's ever needed.
 - A $0 pickup (warranty redo, freebie) takes no invoice number.
+
+## Owner decisions 2026-09-26 (D10–D13)
+
+Four follow-ups the owner decided after the Phase 3 build. As implemented:
+
+- **D10 — counter sales charge sales tax by default.** `POST /api/pos/sale`
+  taxes every line unless the line (or the sale) says `taxable: false`; the
+  legacy body's `amountCents` is now the **pre-tax** price and tax is added on
+  top. A sale-level `taxExempt: true` rings the whole sale up untaxed and needs
+  `taxExemptReason` (3–120 characters, e.g. "Resale certificate", "Nonprofit";
+  400 otherwise). The invoice keeps `tax_exempt` + `tax_exempt_reason`
+  (migration `0018`, hand-written; adding columns leaves the invoice guard
+  triggers as they were) and both land in the `job.create` and `invoice.create`
+  audit rows. The pricing is one shared function, `priceCounterSale` in
+  `shared/invoice.ts`, used by the server and by the `/pos` cart and Quick
+  Order previews, so the screen equals the invoice to the cent. Per-line tax
+  chips on `/pos` start on; `/pos` and `/quick` both have a **Tax exempt**
+  switch with reason chips + a free-text reason, and Quick Order shows the tax
+  and "Customer pays" before Ring up. Rejected: exemption stored on the
+  customer record (not asked for; a certificate on file is a later decision)
+  and per-line exemption reasons (one reason per sale is what was asked for).
+- **D11 — void defaults by source.** `POST /api/invoices/:id/void` with no
+  `keepJob`: a `counter_sale` invoice archives its job (the sale is
+  cancelled); a `job` invoice keeps the job open and unlocked so it can be fixed
+  and re-invoiced. An explicit `keepJob` still wins either way. The void dialog
+  starts with "Keep the order open" ticked for job invoices, unticked for
+  counter sales, and offers the choice for both.
+- **D12 — every payment needs an open drawer.** `recordPayment` refuses any
+  method (cash, card, check, credit, other) with 409 `{code: 'drawer_closed'}`
+  when no drawer is open, and every payment row now carries its drawer. The
+  counter sale, `POST /api/payments` (payments and refunds), an invoice void
+  that refunds money and a return that refunds money check the drawer
+  (`requireOpenDrawer`) **before** asking a manager to approve anything; a
+  counter sale refused this way consumes no invoice number. A void or return
+  that refunds nothing needs no drawer. The Z-report therefore covers every
+  payment. Client: the counter, Quick Order, Record payment and Refund dialogs
+  open the drawer inline for any tender.
+- **D13 — one refund rule.** A bare refund (`POST /api/payments` kind
+  `refund`) needs manager approval only when it is **over**
+  `posSettings.refundApprovalThresholdCents` (default $50, `PUT
+  /api/settings/pos`, admin) — the same threshold as returns; at or under it a
+  cashier does it alone. The refund cap (never more than the job has been
+  paid) stays. Voids always need a manager: invoice void (`invoice.void`) and
+  payment void (`payment.void`), whatever the amount.
+
+**Date ranges (same pass).** A date-only `from`/`to` now means the shop's
+local day on every filter — `/api/reports/summary`, `/api/reports/payments.csv`,
+`/api/reports/sales`, `/api/invoices`, `/api/returns`, `/api/audit`,
+`/api/approvals`, `/api/inventory/transactions` — through one helper,
+`server/lib/dates.ts` (`localDayRange`: local midnight to the next local
+midnight, end exclusive; the server runs with `TZ`, America/Chicago in the
+Dockerfile). Before, a date was a UTC day, so an evening sale landed on the
+next day's report. A full timestamp is still used as given.
