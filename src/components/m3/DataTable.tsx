@@ -2,7 +2,7 @@ import type { ReactNode } from 'react';
 import { cx } from './cx';
 import { IconButton } from './Button';
 import { EmptyState, LinearProgress } from './Feedback';
-import { pageInfo, type Paging } from '../../lib/query';
+import { pageInfo, startsGroup, type Paging } from '../../lib/query';
 
 export interface Column<T> {
   key: string;
@@ -31,15 +31,22 @@ export interface DataTableProps<T> {
   paging?: Paging;
   onRowClick?: (row: T) => void;
   className?: string;
+  /** Group key per row (rows arrive grouped); a header row is drawn where it changes. */
+  groupOf?: (row: T) => string | undefined;
+  /** Content of a group's header row (full width). */
+  renderGroup?: (row: T) => ReactNode;
+  /** Rows of a collapsed group — their header stays, the row is not drawn. */
+  hideRow?: (row: T) => boolean;
 }
 
 const align = (a?: 'left' | 'right' | 'center') => (a === 'right' ? 'text-right' : a === 'center' ? 'text-center' : 'text-left');
 
 /** Dense, readable table with a server-driven pager and empty/error states. */
 export default function DataTable<T>({
-  columns, rows, rowKey, label, loading, error, onRetry, empty, paging, onRowClick, className,
+  columns, rows, rowKey, label, loading, error, onRetry, empty, paging, onRowClick, className, groupOf, renderGroup, hideRow,
 }: DataTableProps<T>) {
   const narrow = (c: Column<T>) => (c.hideOnNarrow ? 'hidden md:table-cell' : '');
+  const keys = groupOf ? rows.map(groupOf) : [];
   return (
     <div className={cx('rounded-shape-medium border border-outline-variant bg-surface overflow-hidden', className)}>
       <div className="h-1">{loading && <LinearProgress label={`Loading ${label}`} />}</div>
@@ -56,7 +63,13 @@ export default function DataTable<T>({
             </tr>
           </thead>
           <tbody>
-            {rows.map((r) => (
+            {rows.map((r, i) => [
+              groupOf && renderGroup && startsGroup(keys, i) && (
+                <tr key={`g:${keys[i]}`} className="border-b border-outline-variant bg-surface-container-low">
+                  <td colSpan={columns.length} className="p-0">{renderGroup(r)}</td>
+                </tr>
+              ),
+              !hideRow?.(r) && (
               <tr key={rowKey(r)} onClick={onRowClick ? () => onRowClick(r) : undefined}
                 // No `state-layer` on a <tr>: its ::before box renders as an extra cell and shifts the row.
                 className={cx('border-b border-outline-variant last:border-b-0', onRowClick && 'cursor-pointer hover:bg-on-surface/[0.08]')}>
@@ -66,7 +79,8 @@ export default function DataTable<T>({
                   </td>
                 ))}
               </tr>
-            ))}
+              ),
+            ])}
           </tbody>
         </table>
       </div>

@@ -72,15 +72,31 @@ export const SORTS = [
   { value: 'threshold:desc', label: 'Min, highest first' },
   { value: 'value:desc', label: 'Value, highest first' },
   { value: 'created:desc', label: 'Newest first' },
+  { value: 'size:asc', label: 'Size, narrowest first' },
+  { value: 'color:asc', label: 'Color A–Z' },
+  { value: 'low:asc', label: 'Low stock first' },
 ] as const;
+
+/** Group-by choices (the old page's Group by); 'none' = a flat list. Default: material. */
+export const GROUPS = [
+  { value: 'material', label: 'Material' },
+  { value: 'color', label: 'Color' },
+  { value: 'size', label: 'Size' },
+  { value: 'unit', label: 'Unit' },
+  { value: 'category', label: 'Category' },
+  { value: 'none', label: 'No grouping' },
+] as const;
+export type Group = typeof GROUPS[number]['value'];
 
 export interface ListState {
   q: string; match: Match; kind: '' | 'roll' | 'other'; stock: '' | StockStatus;
   categoryId: string; supplierId: string; materialId: string; color: string; widthIn: string;
-  sort: string; page: number;
+  sort: string; group: Group; page: number;
+  /** Collapsed group keys (repeated `closed=` params). */
+  closed: string[];
 }
 
-const FILTER_KEYS = ['q', 'match', 'kind', 'stock', 'categoryId', 'supplierId', 'materialId', 'color', 'widthIn', 'sort'] as const;
+const FILTER_KEYS = ['q', 'match', 'kind', 'stock', 'categoryId', 'supplierId', 'materialId', 'color', 'widthIn', 'sort', 'group'] as const;
 const pick = <T extends string>(v: string | null, allowed: readonly T[], fallback: T): T =>
   (v != null && (allowed as readonly string[]).includes(v) ? (v as T) : fallback);
 
@@ -97,18 +113,29 @@ export function readListState(sp: URLSearchParams): ListState {
     color: sp.get('color') ?? '',
     widthIn: sp.get('widthIn') ?? '',
     sort: pick(sp.get('sort'), SORTS.map((s) => s.value), 'name:asc'),
+    group: pick(sp.get('group'), GROUPS.map((g) => g.value), 'material'),
+    closed: sp.getAll('closed'),
     page: Number.isInteger(page) && page > 1 ? page - 1 : 0,
   };
 }
 
-/** New search params with `patch` applied. Changing any filter goes back to page 1 (page is 1-based in the URL). */
+/**
+ * New search params with `patch` applied. Changing any filter goes back to page 1
+ * (page is 1-based in the URL); changing the grouping also re-opens every group.
+ */
 export function writeListState(sp: URLSearchParams, patch: Partial<ListState>): URLSearchParams {
   const next = new URLSearchParams(sp);
   for (const k of FILTER_KEYS) {
     if (!(k in patch)) continue;
     const v = patch[k] as string;
-    const isDefault = v === '' || (k === 'match' && v === 'contains') || (k === 'sort' && v === 'name:asc');
+    const isDefault = v === '' || (k === 'match' && v === 'contains') || (k === 'sort' && v === 'name:asc')
+      || (k === 'group' && v === 'material');
     if (isDefault) next.delete(k); else next.set(k, v);
+  }
+  if ('group' in patch && !('closed' in patch)) next.delete('closed');
+  if (patch.closed) {
+    next.delete('closed');
+    for (const key of patch.closed) next.append('closed', key);
   }
   if (patch.page !== undefined) {
     if (patch.page > 0) next.set('page', String(patch.page + 1)); else next.delete('page');
@@ -123,8 +150,13 @@ export function listApiParams(s: ListState): Params {
     q: s.q.trim(), match: s.q.trim() && s.match !== 'contains' ? s.match : '',
     kind: s.kind, stock: s.stock, categoryId: s.categoryId, supplierId: s.supplierId,
     materialId: s.materialId, color: s.color, widthIn: s.widthIn, sort, dir,
+    group: s.group === 'none' ? '' : s.group,
   };
 }
+
+/** Collapse or re-open one group. */
+export const toggleClosed = (closed: string[], key: string) =>
+  (closed.includes(key) ? closed.filter((k) => k !== key) : [...closed, key]);
 
 /** How many of the "more filters" (dialog) are set — for the Filters button badge. */
 export const moreFilterCount = (s: ListState) =>

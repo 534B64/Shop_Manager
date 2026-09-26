@@ -7,8 +7,10 @@ import { MANUAL_REASONS, errorText, noteRequired, parseWhole, reasonLabel } from
 import type { Location } from '../types';
 
 /** Correct on-hand outside receiving/sales/counts. Needs a reason; a cashier gets the manager-approval prompt. */
-export default function AdjustDialog({ open, onClose, item, locations, onDone }: {
+export default function AdjustDialog({ open, onClose, item, locations, onDone, presetReason = '' }: {
   open: boolean; onClose: () => void; item: InventoryItem; locations: Location[]; onDone: (i: InventoryItem) => void;
+  /** Start with this reason picked (the list's "Adjust…" opens as a correction / discrepancy). */
+  presetReason?: string;
 }) {
   const [dir, setDir] = useState<'remove' | 'add'>('remove');
   const [qty, setQty] = useState('');
@@ -17,7 +19,7 @@ export default function AdjustDialog({ open, onClose, item, locations, onDone }:
   const [loc, setLoc] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => { if (open) { setDir('remove'); setQty(''); setReason(''); setNote(''); setLoc(''); setError(null); } }, [open]);
+  useEffect(() => { if (open) { setDir('remove'); setQty(''); setReason(presetReason); setNote(''); setLoc(''); setError(null); } }, [open, presetReason]);
 
   const n = parseWhole(qty);
   const needNote = noteRequired(reason);

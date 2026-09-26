@@ -59,7 +59,16 @@ export interface Paging {
   hasPrev: boolean; hasNext: boolean; prev: () => void; next: () => void; setPage: (p: number) => void;
 }
 
-export interface PagedState<T> extends Paging { rows: T[]; loading: boolean; error: string | null; reload: () => void }
+export interface PagedState<T> extends Paging {
+  rows: T[]; loading: boolean; error: string | null; reload: () => void;
+  /** The whole last response, for endpoints that send extras beside rows (e.g. inventory `groups`). */
+  data?: Page<T> & Record<string, unknown>;
+}
+
+/** True when row `i` starts a new group (DataTable draws a header row there). */
+export function startsGroup(keys: (string | undefined)[], i: number): boolean {
+  return keys[i] != null && (i === 0 || keys[i] !== keys[i - 1]);
+}
 
 /** Page math shared by the hook and DataTable. */
 export function pageInfo(page: number, pageSize: number, total: number) {
@@ -79,7 +88,7 @@ export function usePaged<T>(url: string, params: Params = {}, opts: { pageSize?:
   const [page, setPage] = useState(0);
   const [lastKey, setLastKey] = useState(key);
   if (key !== lastKey) { setLastKey(key); setPage(0); } // reset during render, no extra fetch
-  const q = useQuery<Page<T>>(withParams(key, { limit: pageSize, offset: page * pageSize }));
+  const q = useQuery<Page<T> & Record<string, unknown>>(withParams(key, { limit: pageSize, offset: page * pageSize }));
   const total = q.data?.total ?? 0;
   const info = pageInfo(page, pageSize, total);
   // A page past the end (rows archived meanwhile) snaps back to the last one.
@@ -89,6 +98,6 @@ export function usePaged<T>(url: string, params: Params = {}, opts: { pageSize?:
     hasPrev: info.hasPrev, hasNext: info.hasNext,
     prev: () => setPage((p) => Math.max(0, p - 1)),
     next: () => setPage((p) => (p + 1 < info.pageCount ? p + 1 : p)),
-    setPage, loading: q.loading, error: q.error, reload: q.reload,
+    setPage, loading: q.loading, error: q.error, reload: q.reload, data: q.data,
   };
 }

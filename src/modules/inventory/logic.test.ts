@@ -1,8 +1,9 @@
 import { describe, it, expect } from 'vitest';
 import {
   stockStatus, costPerCountUnit, parseWhole, parseDelta, receiptCountUnits, signed, noteRequired,
-  readListState, writeListState, listApiParams, moreFilterCount,
+  readListState, writeListState, listApiParams, moreFilterCount, toggleClosed,
 } from './logic';
+import { startsGroup } from '../../lib/query';
 import { enteredIds, enteredIn, submitCounts, chunks, emptyDraft, type Draft } from './counts/draft';
 
 describe('stock status', () => {
@@ -67,6 +68,30 @@ describe('item list URL state', () => {
     expect(listApiParams(s)).toMatchObject({ q: '', match: '', sort: 'value', dir: 'desc', categoryId: 'none' });
     expect(listApiParams({ ...s, q: 'tape' }).match).toBe('starts');
     expect(moreFilterCount(s)).toBe(2);
+  });
+  it('groups by material by default; group=none sends no group; new sorts are accepted', () => {
+    expect(readListState(new URLSearchParams()).group).toBe('material');
+    expect(listApiParams(readListState(new URLSearchParams())).group).toBe('material');
+    const none = readListState(new URLSearchParams('group=none&sort=low:asc'));
+    expect(listApiParams(none)).toMatchObject({ group: '', sort: 'low', dir: 'asc' });
+    expect(readListState(new URLSearchParams('sort=size:asc')).sort).toBe('size:asc');
+    expect(readListState(new URLSearchParams('group=junk')).group).toBe('material');
+  });
+  it('collapsed groups live in the URL, keep the page, and reset when the grouping changes', () => {
+    let sp = writeListState(new URLSearchParams('page=3'), { closed: toggleClosed([], 'mat:4') });
+    expect(readListState(sp)).toMatchObject({ closed: ['mat:4'], page: 2 });
+    sp = writeListState(sp, { closed: toggleClosed(['mat:4'], 'other') });
+    expect(sp.getAll('closed')).toEqual(['mat:4', 'other']);
+    expect(toggleClosed(['mat:4', 'other'], 'mat:4')).toEqual(['other']);
+    sp = writeListState(sp, { group: 'color' });
+    expect(sp.getAll('closed')).toEqual([]);
+    expect(sp.get('group')).toBe('color');
+    expect(writeListState(sp, { group: 'material' }).get('group')).toBeNull();
+  });
+  it('a header row starts each group on the page', () => {
+    const keys = ['a', 'a', 'b', 'other', 'other'];
+    expect(keys.map((_, i) => startsGroup(keys, i))).toEqual([true, false, true, true, false]);
+    expect(startsGroup([undefined, undefined], 0)).toBe(false);
   });
 });
 

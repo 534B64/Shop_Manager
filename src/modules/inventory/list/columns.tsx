@@ -1,15 +1,22 @@
 import { Link } from 'react-router-dom';
-import type { Column } from '../../../components/m3';
+import { Button, IconButton, type Column } from '../../../components/m3';
 import { formatCents } from '../../../lib/format';
 import type { InventoryItem, Supplier } from '../../../lib/types';
 import StockStatus from '../components/StockStatus';
 
 export const sizeLabel = (i: InventoryItem) => i.sizeText || (i.nominalWidthIn != null ? `${i.nominalWidthIn}″` : null);
 
+/** Row actions: one-tap −1 used / +1 received, and "Adjust…" (discrepancy / correction). */
+export interface RowActions {
+  step: (i: InventoryItem, delta: 1 | -1) => void;
+  adjust: (i: InventoryItem) => void;
+  busy: number | null;
+}
+
 /** Item list columns. The name is a real link, so rows are keyboard-reachable. */
 export function itemColumns(categoryName: (id: number | null | undefined) => string | null,
-  supplier: (id: number | null | undefined) => Supplier | null): Column<InventoryItem>[] {
-  return [
+  supplier: (id: number | null | undefined) => Supplier | null, actions?: RowActions): Column<InventoryItem>[] {
+  const cols: Column<InventoryItem>[] = [
     {
       key: 'name', header: 'Item', width: 'min-w-[12rem]', render: (i) => {
         const meta = [categoryName(i.categoryId), i.materialId != null ? 'Roll' : null, i.color, sizeLabel(i)].filter(Boolean);
@@ -44,4 +51,17 @@ export function itemColumns(categoryName: (id: number | null | undefined) => str
       render: (i) => (i.avgDailyUse ? `~${Number(i.avgDailyUse.toFixed(1))}/day` : '—'),
     },
   ];
+  if (!actions) return cols;
+  return [...cols, {
+    key: 'actions', header: <span className="sr-only">Actions</span>, align: 'right', render: (i) => (
+      // Buttons, not row clicks: stop the row's open-item navigation.
+      <div className="flex items-center justify-end gap-1" onClick={(e) => e.stopPropagation()}>
+        <IconButton icon="remove" label={`Used one ${i.name}`} touch variant="outlined"
+          disabled={actions.busy === i.id} onClick={() => actions.step(i, -1)} />
+        <IconButton icon="add" label={`Received one ${i.name}`} touch variant="outlined"
+          disabled={actions.busy === i.id} onClick={() => actions.step(i, 1)} />
+        <Button variant="text" touch onClick={() => actions.adjust(i)}>Adjust…</Button>
+      </div>
+    ),
+  }];
 }

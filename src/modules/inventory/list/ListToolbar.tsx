@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Button, Chip, Select, TextField } from '../../../components/m3';
-import { SORTS, moreFilterCount, type ListState } from '../logic';
+import { GROUPS, SORTS, moreFilterCount, type Group, type ListState } from '../logic';
 import { useDebounced } from '../components/ItemPicker';
 
 type Update = (patch: Partial<ListState>, replace?: boolean) => void;
@@ -26,6 +26,9 @@ export default function ListToolbar({ state, update, onMoreFilters, activeChips 
       <div className="flex flex-wrap gap-3 items-start">
         <TextField className="flex-1 min-w-[16rem]" label="Search items" leadingIcon="search" type="search"
           value={text} onChange={(e) => setText(e.target.value)} placeholder="Name, color or vendor" />
+        <Select className="w-44" label="Group by" value={state.group} onChange={(e) => update({ group: e.target.value as Group })}>
+          {GROUPS.map((g) => <option key={g.value} value={g.value}>{g.label}</option>)}
+        </Select>
         <Select className="w-60" label="Sort" value={state.sort} onChange={(e) => update({ sort: e.target.value })}>
           {SORTS.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
         </Select>

@@ -3,7 +3,7 @@
 // can move its client-side filters to the server one-for-one.
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, lt, lte, or, sql, type SQL } from 'drizzle-orm';
 import { db } from '../../db/index.js';
-import { inventoryAdjustments, inventoryItems, locations, suppliers } from '../../db/schema/index.js';
+import { categories, inventoryAdjustments, inventoryItems, locations, materials, suppliers } from '../../db/schema/index.js';
 import { TXN_TYPES } from '../../../shared/domain.js';
 import { daysUntilStockout, urgencyCompare } from '../../../shared/reorder.js';
 import { likePattern, parseDir, parseSort, type Page, type PageQuery } from '../../lib/paging.js';
@@ -60,25 +60,91 @@ export function itemFilters(q: Q): SQL[] {
   return conds;
 }
 
-const ITEM_SORTS = ['name', 'count', 'threshold', 'created', 'value'] as const;
+const ITEM_SORTS = ['name', 'count', 'threshold', 'created', 'value', 'size', 'color', 'low'] as const;
+export const ITEM_GROUPS = ['material', 'color', 'size', 'unit', 'category'] as const;
+export type ItemGroup = typeof ITEM_GROUPS[number];
 
 async function total(where: SQL | undefined): Promise<number> {
   const [r] = await db.select({ n: sql<number>`count(*)` }).from(I).where(where);
   return Number(r?.n ?? 0);
 }
 
-/** GET /api/inventory?limit=… — one page of active items. */
-export async function itemPage(q: Q, page: PageQuery): Promise<Page<typeof I.$inferSelect>> {
+const M = materials;
+const C = categories;
+const sizeText = sql`nullif(trim(${I.sizeText}), '')`;
+
+/**
+ * Group-by (the old Inventory page's Group by): the key + label per row and the
+ * ORDER BY that keeps each group contiguous. Rows without the attribute share
+ * the null key and sort last ("Other").
+ */
+function groupSql(g: ItemGroup): { key: SQL; label: SQL; order: SQL[] } {
+  switch (g) {
+    case 'material': return {
+      key: sql`'mat:' || ${M.id}`, label: sql`${M.name}`,
+      order: [sql`${M.id} IS NULL`, sql`${M.name} COLLATE NOCASE`, sql`${M.id}`],
+    };
+    case 'color': return {
+      key: sql`'color:' || lower(${I.color})`, label: sql`${I.color}`,
+      order: [sql`${I.color} IS NULL`, sql`lower(${I.color})`],
+    };
+    case 'size': return {
+      key: sql`'size:' || coalesce(${sizeText}, ${I.nominalWidthIn} || 'in')`,
+      label: sql`coalesce(${sizeText}, ${I.nominalWidthIn} || '″')`,
+      // Plain widths numerically first, then free-text sizes alphabetically.
+      order: [sql`coalesce(${sizeText}, ${I.nominalWidthIn}) IS NULL`, sql`${sizeText} IS NOT NULL`,
+        sql`${I.nominalWidthIn}`, sql`${sizeText} COLLATE NOCASE`],
+    };
+    case 'unit': return {
+      key: sql`'unit:' || lower(nullif(${I.countUnit}, ''))`, label: sql`nullif(${I.countUnit}, '')`,
+      order: [sql`nullif(${I.countUnit}, '') IS NULL`, sql`lower(${I.countUnit})`],
+    };
+    case 'category': return {
+      key: sql`'cat:' || ${C.id}`, label: sql`${C.name}`,
+      order: [sql`${C.id} IS NULL`, sql`${C.sort}`, sql`${C.name} COLLATE NOCASE`, sql`${C.id}`],
+    };
+  }
+}
+
+export const OTHER_GROUP = { key: 'other', label: 'Other / Consumables' };
+export type ItemRow = typeof I.$inferSelect & { groupKey?: string; groupLabel?: string };
+export interface GroupCount { key: string; label: string; count: number; low: number }
+
+/**
+ * GET /api/inventory?limit=… — one page of active items. With `group=` the rows
+ * come ordered by the group first (then the chosen sort) with groupKey/groupLabel
+ * on each row, plus `groups` (count + low count per group over the whole filter).
+ */
+export async function itemPage(q: Q, page: PageQuery): Promise<Page<ItemRow> & { groups?: GroupCount[] }> {
   const where = and(...itemFilters(q));
   const dir = parseDir(q.dir) === 'desc' ? desc : asc;
   const key = parseSort(q.sort, ITEM_SORTS, 'name');
-  const col = {
-    name: sql`${I.name} COLLATE NOCASE`, count: I.count, threshold: I.lowStockThreshold,
-    created: I.createdAt, value: sql`${I.count} * ${I.avgCostCents}`,
+  const name = sql`${I.name} COLLATE NOCASE`;
+  const order: SQL[] = {
+    name: [dir(name)], count: [dir(I.count)], threshold: [dir(I.lowStockThreshold)],
+    created: [dir(I.createdAt)], value: [dir(sql`${I.count} * ${I.avgCostCents}`)],
+    size: [sql`${I.nominalWidthIn} IS NULL`, dir(I.nominalWidthIn), sql`${sizeText} COLLATE NOCASE`, asc(name)],
+    color: [sql`${I.color} IS NULL`, dir(sql`lower(${I.color})`), asc(name)],
+    low: [desc(sql`${I.count} <= ${I.lowStockThreshold}`), asc(name)],
   }[key];
-  const rows = await db.select().from(I).where(where)
-    .orderBy(dir(col), asc(I.id)).limit(page.limit).offset(page.offset);
-  return { rows, total: await total(where), ...page };
+  const group = (ITEM_GROUPS as readonly string[]).includes(q.group as string) ? q.group as ItemGroup : null;
+  if (!group) {
+    const rows = await db.select().from(I).where(where)
+      .orderBy(...order, asc(I.id)).limit(page.limit).offset(page.offset);
+    return { rows, total: await total(where), ...page };
+  }
+  const g = groupSql(group);
+  const raw = await db.select({ item: I, groupKey: sql<string | null>`${g.key}`, groupLabel: sql<string | null>`${g.label}` })
+    .from(I).leftJoin(M, eq(I.materialId, M.id)).leftJoin(C, eq(I.categoryId, C.id))
+    .where(where).orderBy(...g.order, ...order, asc(I.id)).limit(page.limit).offset(page.offset);
+  const counts = await db.select({
+    key: sql<string | null>`${g.key}`, label: sql<string | null>`min(${g.label})`,
+    count: sql<number>`count(*)`, low: sql<number>`sum(${I.count} <= ${I.lowStockThreshold})`,
+  }).from(I).leftJoin(M, eq(I.materialId, M.id)).leftJoin(C, eq(I.categoryId, C.id))
+    .where(where).groupBy(g.key);
+  const rows = raw.map((r) => ({ ...r.item, groupKey: r.groupKey ?? OTHER_GROUP.key, groupLabel: r.groupLabel ?? OTHER_GROUP.label }));
+  const groups = counts.map((c) => ({ key: c.key ?? OTHER_GROUP.key, label: c.label ?? OTHER_GROUP.label, count: Number(c.count), low: Number(c.low ?? 0) }));
+  return { rows, total: await total(where), ...page, groups };
 }
 
 // Needs-ordering urgency (shared/reorder.ts urgencyCompare) as SQL: rows with
