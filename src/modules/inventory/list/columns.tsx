@@ -11,7 +11,7 @@ export function itemColumns(categoryName: (id: number | null | undefined) => str
   supplier: (id: number | null | undefined) => Supplier | null): Column<InventoryItem>[] {
   return [
     {
-      key: 'name', header: 'Item', render: (i) => {
+      key: 'name', header: 'Item', width: 'min-w-[12rem]', render: (i) => {
         const meta = [categoryName(i.categoryId), i.materialId != null ? 'Roll' : null, i.color, sizeLabel(i)].filter(Boolean);
         return (
           <div className="min-w-0 py-1">

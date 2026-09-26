@@ -41,7 +41,7 @@ export default function VarianceCard({ itemId }: { itemId: number }) {
                   <td className="py-1.5 text-right tabular-nums whitespace-nowrap">{v.systemCount} → {v.counted}</td>
                   <td className="py-1.5 text-right tabular-nums whitespace-nowrap">
                     {v.delta === 0 ? 'None' : <>{signed(v.delta)}{v.pct != null && ` (${signed(Math.round(v.pct))}%)`}</>}
-                    {v.aboveThreshold && <span className="text-warning"> <Icon name="warning" size={14} title="Above threshold" /></span>}
+                    {v.aboveThreshold && <span className="text-warning inline-flex align-middle ml-1"><Icon name="warning" size={14} title="Above threshold" /></span>}
                   </td>
                   <td className="py-1.5 text-right tabular-nums">{v.impactCents != null && v.delta !== 0 ? formatCents(v.impactCents) : '—'}</td>
                   <td className="py-1.5 pl-3 text-on-surface-variant">{[v.reasonCode && reasonLabel(v.reasonCode), v.note].filter(Boolean).join(' — ') || '—'}</td>

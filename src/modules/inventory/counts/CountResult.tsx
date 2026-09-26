@@ -71,7 +71,7 @@ export default function CountResult({ cc, onChanged }: { cc: CycleCount; onChang
                     <tr key={v.itemId} className="border-t border-outline-variant align-top">
                       <td className="py-2"><Link className="text-on-surface hover:underline" to={`/inventory/${v.itemId}`}>{l.name}</Link></td>
                       <td className="py-2 text-right tabular-nums whitespace-nowrap">{v.systemCount} → {v.counted}</td>
-                      <td className="py-2 text-right tabular-nums whitespace-nowrap">{signed(v.delta)}{v.aboveThreshold && <span className="text-warning"> <Icon name="warning" size={14} title="Above threshold" /></span>}</td>
+                      <td className="py-2 text-right tabular-nums whitespace-nowrap">{signed(v.delta)}{v.aboveThreshold && <span className="text-warning inline-flex align-middle ml-1"><Icon name="warning" size={14} title="Above threshold" /></span>}</td>
                       <td className="py-2 text-right tabular-nums">{v.impactCents != null ? formatCents(v.impactCents) : '—'}</td>
                       <td className="py-2 pl-3 text-on-surface-variant">{[l.reasonCode && reasonLabel(l.reasonCode), l.note].filter(Boolean).join(' — ') || '—'}</td>
                     </tr>

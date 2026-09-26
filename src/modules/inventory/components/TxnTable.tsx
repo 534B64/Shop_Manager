@@ -15,7 +15,7 @@ export default function TxnTable({ label, list, showItem, showCost, locationName
 }) {
   const cols: Column<Txn>[] = [
     { key: 'when', header: 'When', render: (t) => <span className="whitespace-nowrap">{when(t.createdAt)}</span> },
-    ...(showItem ? [{ key: 'item', header: 'Item', render: (t: Txn) => (
+    ...(showItem ? [{ key: 'item', header: 'Item', width: 'min-w-[10rem]', render: (t: Txn) => (
       <Link to={`/inventory/${t.itemId}`} className="text-primary underline-offset-2 hover:underline">{t.itemName ?? `#${t.itemId}`}</Link>
     ) }] : []),
     { key: 'type', header: 'Type', render: (t) => txnLabel(t.txnType) },
