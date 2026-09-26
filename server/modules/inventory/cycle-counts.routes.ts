@@ -14,8 +14,9 @@
 //   send-back  — manager+. Submitted → counting; the round's lines stay
 //                (append-only) and are superseded by the next submission.
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify';
-import { and, asc, eq, ne } from 'drizzle-orm';
+import { and, asc, desc, eq, ne, sql } from 'drizzle-orm';
 import { db, withTx, type Db } from '../../db/index.js';
+import { parsePage, PagingError } from '../../lib/paging.js';
 import { cycleCounts, cycleCountLines, inventoryBalances, inventoryItems } from '../../db/schema/index.js';
 import { VARIANCE_REASON_CODES } from '../../../shared/domain.js';
 import { varianceFor } from '../../../shared/countReview.js';
@@ -39,6 +40,17 @@ function costPerCountUnit(item: { avgCostCents: number; lastCostCents: number | 
 
 const currentLines = (cc: CycleCount, dbx: Db = db) =>
   dbx.select().from(cycleCountLines)
+    .where(and(eq(cycleCountLines.cycleCountId, cc.id), eq(cycleCountLines.submission, cc.submission)))
+    .orderBy(asc(cycleCountLines.id));
+
+/** The session's current-round lines with item names — shown only once the
+ *  blind entry is over (submitted or posted). */
+const namedLines = (cc: CycleCount) =>
+  db.select({
+    itemId: cycleCountLines.itemId, name: inventoryItems.name, countUnit: inventoryItems.countUnit,
+    systemCount: cycleCountLines.systemCount, countedQty: cycleCountLines.countedQty,
+    unitCostCents: cycleCountLines.unitCostCents, reasonCode: cycleCountLines.reasonCode, note: cycleCountLines.note,
+  }).from(cycleCountLines).innerJoin(inventoryItems, eq(cycleCountLines.itemId, inventoryItems.id))
     .where(and(eq(cycleCountLines.cycleCountId, cc.id), eq(cycleCountLines.submission, cc.submission)))
     .orderBy(asc(cycleCountLines.id));
 
@@ -101,13 +113,28 @@ export async function cycleCountRoutes(app: FastifyInstance) {
       .where(ne(cycleCounts.status, 'posted')).orderBy(cycleCounts.scheduledFor, cycleCounts.id).limit(1);
     if (!pending) return null;
     if (pending.status !== 'submitted') return pending;
-    const lines = await db.select({
-      itemId: cycleCountLines.itemId, name: inventoryItems.name, systemCount: cycleCountLines.systemCount,
-      countedQty: cycleCountLines.countedQty, reasonCode: cycleCountLines.reasonCode, note: cycleCountLines.note,
-    }).from(cycleCountLines).innerJoin(inventoryItems, eq(cycleCountLines.itemId, inventoryItems.id))
-      .where(and(eq(cycleCountLines.cycleCountId, pending.id), eq(cycleCountLines.submission, pending.submission)))
-      .orderBy(asc(cycleCountLines.id));
-    return { ...pending, lines };
+    return { ...pending, lines: await namedLines(pending) };
+  });
+
+  // Count history, newest first: { rows, total, limit, offset } (default 25).
+  app.get('/api/cycle-counts', async (req, reply) => {
+    let page;
+    try { page = parsePage(req.query as Record<string, unknown>) ?? { limit: 25, offset: 0 }; } catch (e) {
+      if (!(e instanceof PagingError)) throw e;
+      return reply.code(400).send({ error: 'bad_paging', message: e.message });
+    }
+    const rows = await db.select().from(cycleCounts).orderBy(desc(cycleCounts.id)).limit(page.limit).offset(page.offset);
+    const [n] = await db.select({ n: sql<number>`count(*)` }).from(cycleCounts);
+    return { rows, total: Number(n?.n ?? 0), ...page };
+  });
+
+  // One session. Lines only once submitted or posted — a count still being
+  // taken stays blind.
+  app.get('/api/cycle-counts/:id', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    const [cc] = Number.isInteger(id) ? await db.select().from(cycleCounts).where(eq(cycleCounts.id, id)) : [];
+    if (!cc) return reply.code(404).send({ error: 'Cycle count not found' });
+    return { ...cc, lines: cc.status === 'counting' ? [] : await namedLines(cc) };
   });
 
   app.post('/api/cycle-counts', {

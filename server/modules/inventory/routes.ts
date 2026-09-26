@@ -13,7 +13,7 @@ import {
 import { ledgerWrite, txnUser } from './http.js';
 import { requireApproval, requireRole, approvalSchema } from '../auth/index.js';
 import { audit } from '../audit/index.js';
-import { itemPage, reorderAll, reorderPage, usagePage, lowStockSummary } from './lists.js';
+import { itemPage, reorderAll, reorderPage, usagePage, lowStockSummary, transactionPage } from './lists.js';
 import { parsePage, PagingError, type PageQuery } from '../../lib/paging.js';
 
 const isUniqueViolation = (e: unknown): boolean =>
@@ -266,6 +266,21 @@ export async function inventoryRoutes(app: FastifyInstance) {
       .where(and(eq(inventoryAdjustments.itemId, id), before != null ? lt(inventoryAdjustments.id, before) : undefined))
       .orderBy(desc(inventoryAdjustments.id)).limit(limit);
     return { rows, nextBefore: rows.length === limit ? rows[rows.length - 1].id : null };
+  });
+
+  // The ledger across items (Adjustments page), keyset-paged like the per-item
+  // one; manager+ because rows carry costs (lists.ts transactionPage).
+  app.get('/api/inventory/transactions', async (req, reply) => {
+    if (!requireRole(req, reply, 'manager')) return reply;
+    return transactionPage(req.query as Record<string, unknown>);
+  });
+
+  // One item (inactive ones too, so old links still open) — the item page.
+  app.get('/api/inventory/:id', async (req, reply) => {
+    const id = Number((req.params as { id: string }).id);
+    if (!Number.isInteger(id)) return reply.code(404).send({ error: 'Item not found' });
+    const [item] = await db.select().from(inventoryItems).where(eq(inventoryItems.id, id));
+    return item ?? reply.code(404).send({ error: 'Item not found' });
   });
 
   // On-hand per location for one item.
