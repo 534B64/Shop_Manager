@@ -47,6 +47,8 @@ async function send(path: string, init: RequestInit | undefined, retries: number
   }
 }
 
+const PIN_ANSWER_PATHS = ['/api/auth/login', '/api/auth/setup', '/api/users/me/pin'];
+
 export async function api<T>(path: string, init?: RequestInit, retries = 2): Promise<T> {
   let reqInit = init;
   let approvalError: string | undefined;
@@ -54,8 +56,9 @@ export async function api<T>(path: string, init?: RequestInit, retries = 2): Pro
     const res = await send(path, reqInit, retries);
     if (res.ok) return (await res.json()) as T;
     const body = (await res.json().catch(() => ({}))) as Record<string, unknown>;
-    // (A wrong PIN at sign-in is also a 401 — that one is just an answer.)
-    if (res.status === 401 && path !== '/api/auth/login' && path !== '/api/auth/setup') {
+    // (A wrong PIN at sign-in — or a wrong current PIN when changing your own —
+    // is also a 401; that one is just an answer, not a dead session.)
+    if (res.status === 401 && !PIN_ANSWER_PATHS.includes(path)) {
       setToken(null);
       onUnauthorized();
     }
