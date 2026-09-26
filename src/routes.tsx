@@ -8,9 +8,9 @@ import type { Role } from './lib/session';
 import type { NavItem } from './components/m3';
 
 const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
-const Quotes = lazy(() => import('./modules/jobs/Quotes'));
-const Orders = lazy(() => import('./modules/jobs/Orders'));
-const QuickOrder = lazy(() => import('./modules/jobs/QuickOrder'));
+const QuotePage = lazy(() => import('./modules/jobs/quote/QuotePage'));
+const OrdersPage = lazy(() => import('./modules/jobs/orders/OrdersPage'));
+const QuickOrderPage = lazy(() => import('./modules/jobs/quick/QuickOrderPage'));
 const Payments = lazy(() => import('./modules/payments/Pos'));
 const CustomerList = lazy(() => import('./modules/customers/CustomerList'));
 const CustomerDetail = lazy(() => import('./modules/customers/CustomerDetail'));
@@ -82,10 +82,10 @@ const DEFS: Def[] = [
 
   // Jobs
   { path: '/quotes', element: <Navigate to="/quotes/new" replace /> },
-  { path: '/quotes/new', element: <Quotes /> },
-  { path: '/quotes/:id', element: <Quotes /> },
-  { path: '/orders', element: <Orders /> },
-  { path: '/quick', element: <QuickOrder /> },
+  { path: '/quotes/new', element: <QuotePage /> },
+  { path: '/quotes/:id', element: <QuotePage /> },
+  { path: '/orders', element: <OrdersPage /> },
+  { path: '/quick', element: <QuickOrderPage /> },
 
   { path: '/customers', element: <CustomerList /> },
   { path: '/customers/:id', element: <CustomerDetail /> },

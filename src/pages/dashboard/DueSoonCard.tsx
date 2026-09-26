@@ -1,27 +1,31 @@
-import { useMemo } from 'react';
 import { List, ListItem, EmptyState, cx } from '../../components/m3';
 import { useQuery } from '../../lib/query';
 import { formatDate } from '../../lib/format';
 import type { Job } from '../../lib/types';
 import DashCard from './DashCard';
-import { dueSoon, splitTags, tagColor, type DueState } from './logic';
+import { dueState, localIsoDate, splitTags, tagColor, type DueState } from './logic';
+
+interface DueSoon { rows: Job[]; total: number; overdue: number }
 
 const SHOW = 6;
 const DUE_TEXT: Record<DueState, string> = { overdue: 'text-error', today: 'text-warning', soon: 'text-on-surface-variant' };
 const DUE_LABEL: Record<DueState, string> = { overdue: 'Overdue', today: 'Today', soon: '' };
 
 export default function DueSoonCard() {
-  const q = useQuery<Job[]>('/api/jobs?limit=200');
-  const due = useMemo(() => dueSoon(q.data ?? [], new Date()), [q.data]);
-  const overdue = due.filter((j) => j.due === 'overdue').length;
+  const today = localIsoDate(new Date());
+  // The server filters, sorts and counts; only the rows shown come down.
+  const q = useQuery<DueSoon>(`/api/jobs/due-soon?days=7&limit=${SHOW}&today=${today}`);
+  const due = (q.data?.rows ?? []).map((j) => ({ ...j, due: dueState(j.dueDate!, today) }));
+  const total = q.data?.total ?? 0;
+  const overdue = q.data?.overdue ?? 0;
   return (
     <DashCard title="Due soon" to="/orders" openLabel="Open orders" loading={q.loading} error={q.error} onRetry={q.reload}
-      subtitle={q.data && (due.length ? `${due.length} in the next 7 days${overdue ? ` · ${overdue} overdue` : ''}` : 'Next 7 days')}>
-      {q.data && due.length === 0 && <EmptyState icon="check" title="Nothing due">Nothing due in the next 7 days.</EmptyState>}
+      subtitle={q.data && (total ? `${total} in the next 7 days${overdue ? ` · ${overdue} overdue` : ''}` : 'Next 7 days')}>
+      {q.data && total === 0 && <EmptyState icon="check" title="Nothing due">Nothing due in the next 7 days.</EmptyState>}
       {due.length > 0 && (
         <List label="Jobs due soon" className="-mx-4 py-0">
-          {due.slice(0, SHOW).map((j) => (
-            <ListItem key={j.id} to="/orders"
+          {due.map((j) => (
+            <ListItem key={j.id} to={`/quotes/${j.id}`}
               headline={j.title}
               supportingText={
                 <span className="flex items-center gap-3 flex-wrap">
@@ -42,7 +46,7 @@ export default function DueSoonCard() {
           ))}
         </List>
       )}
-      {due.length > SHOW && <p className="text-body-medium text-on-surface-variant mt-2">+{due.length - SHOW} more on the Orders board</p>}
+      {total > SHOW && <p className="text-body-medium text-on-surface-variant mt-2">+{total - SHOW} more on the Orders board</p>}
     </DashCard>
   );
 }

@@ -14,6 +14,7 @@ const jobSelect = {
   rollWidthIn: jobs.rollWidthIn,
   customerName: customers.name,
   customerPhone: customers.phone,
+  customerLevel: customers.level,
   type: jobs.type,
   title: jobs.title,
   status: jobs.status,

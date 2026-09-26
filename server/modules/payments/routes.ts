@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, desc, sql, isNull } from 'drizzle-orm';
+import { eq, desc, sql, isNull, and } from 'drizzle-orm';
+import { parsePage, PagingError } from '../../lib/paging.js';
 import { db, withTx } from '../../db/index.js';
 import { payments, jobs, customers, customerCredits, invoices, invoiceVoids, salesReturns, drawerSessions } from '../../db/schema/index.js';
 import { recordPayment, paidNetCents, PaymentError } from './service.js';
@@ -148,7 +149,14 @@ export async function paymentRoutes(app: FastifyInstance) {
 
   // Balance = after-tax total − returned goods − live payments + live refunds.
   // Removed (archived) jobs — incl. sales cancelled by an invoice void — are left out.
-  app.get('/api/balances', async () => {
+  // With ?limit= (and optional offset) it answers one page, largest balance
+  // first, plus the count and the total owed — all in SQL (the dashboard).
+  app.get('/api/balances', async (req, reply) => {
+    let page;
+    try { page = parsePage(req.query as Record<string, unknown>); } catch (e) {
+      if (e instanceof PagingError) return reply.code(400).send({ error: 'bad_paging', message: e.message });
+      throw e;
+    }
     const live = db.$with('live').as(
       db.select({
         jobId: payments.jobId,
@@ -161,6 +169,20 @@ export async function paymentRoutes(app: FastifyInstance) {
         .leftJoin(invoiceVoids, eq(invoiceVoids.invoiceId, invoices.id))
         .where(isNull(invoiceVoids.id)).groupBy(invoices.jobId),
     );
+    if (page) {
+      const owed = sql<number>`coalesce(${jobs.totalCents}, ${jobs.finalPriceCents}, 0) - coalesce(${ret.total}, 0) - coalesce(${live.net}, 0)`;
+      const from = () => db.with(live, ret);
+      const where = and(isNull(jobs.deletedAt), sql`${owed} > 0`);
+      const rows = await from()
+        .select({ jobId: jobs.id, title: jobs.title, status: jobs.status, customerName: customers.name, owedCents: owed })
+        .from(jobs).leftJoin(live, eq(live.jobId, jobs.id)).leftJoin(ret, eq(ret.jobId, jobs.id))
+        .leftJoin(customers, eq(jobs.customerId, customers.id))
+        .where(where).orderBy(desc(owed), jobs.id).limit(page.limit).offset(page.offset);
+      const [agg] = await from()
+        .select({ n: sql<number>`count(*)`, sum: sql<number>`coalesce(sum(${owed}), 0)` })
+        .from(jobs).leftJoin(live, eq(live.jobId, jobs.id)).leftJoin(ret, eq(ret.jobId, jobs.id)).where(where);
+      return { rows, total: agg.n, totalOwedCents: agg.sum, ...page };
+    }
     const rows = await db.with(live, ret)
       .select({
         jobId: jobs.id, title: jobs.title, status: jobs.status,

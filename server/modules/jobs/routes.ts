@@ -1,5 +1,5 @@
 import type { FastifyInstance } from 'fastify';
-import { eq, desc, isNull, and, or, like, sql } from 'drizzle-orm';
+import { eq, isNull, and } from 'drizzle-orm';
 import { withTx, type Db } from '../../db/index.js';
 import { jobs, customers, materials, jobItems } from '../../db/schema/index.js';
 import { owedCents, livePaymentCount, openDrawer } from '../payments/index.js';
@@ -9,6 +9,7 @@ import { audit } from '../audit/index.js';
 import { JOB_TYPES, type JobStatus } from '../../../shared/domain.js';
 import { canTransition } from '../../../shared/statusFlow.js';
 import { baseQuery, liveItems } from './queries.js';
+import { jobListRoutes } from './lists.js';
 import {
   generatePo, verifyQuoteMath, needsOverrideApproval, type PriceCheck, type VerifyItemInput,
 } from './service.js';
@@ -117,30 +118,20 @@ async function jobWithItems(id: number, dbx: Db) {
   return row ? { ...row, items: await liveItems(id, dbx) } : null;
 }
 
-/** LIKE pattern for a user's search text; % and _ match literally. */
-const likePattern = (s: string) => `%${s.replace(/[\\%_]/g, (c) => `\\${c}`)}%`;
-
 export async function jobRoutes(app: FastifyInstance) {
-  // ?q= searches title / PO / tags / file ref / customer name in SQL, before
-  // the LIMIT — an old job is found even when newer jobs fill the page.
-  app.get('/api/jobs', async (req) => {
-    const { status, limit, q } = req.query as { status?: string; limit?: string; q?: string };
-    const max = Math.min(Number(limit) || 50, 500);
-    const conds = [isNull(jobs.deletedAt)];
-    if (status) conds.push(eq(jobs.status, status));
-    if (q?.trim()) {
-      const p = likePattern(q.trim());
-      const m = (col: Parameters<typeof like>[0]) => sql`${col} LIKE ${p} ESCAPE '\\'`;
-      conds.push(or(m(jobs.title), m(jobs.po), m(jobs.tags), m(jobs.fileRef), m(customers.name))!);
-    }
-    return baseQuery().where(and(...conds)).orderBy(desc(jobs.createdAt)).limit(max);
-  });
+  await jobListRoutes(app); // GET /api/jobs, /api/jobs/board, /api/jobs/due-soon
 
   app.get('/api/jobs/:id', async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
     const [row] = await baseQuery().where(eq(jobs.id, id)).limit(1);
     if (!row) return reply.code(404).send({ error: 'Job not found' });
-    return { ...row, items: await liveItems(id) };
+    // The live invoice (if any) tells the edit page which fields are locked.
+    const inv = await liveInvoiceForJob(id);
+    return {
+      ...row, items: await liveItems(id),
+      invoice: inv ? { id: inv.id, number: String(inv.number).padStart(6, '0') } : null,
+      owedCents: await owedCents(row),
+    };
   });
 
   app.post('/api/jobs', { schema: { body: createBody } }, async (req, reply) => {
