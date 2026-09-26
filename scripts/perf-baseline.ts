@@ -26,7 +26,7 @@ interface Probe {
 
 // Paths verified against server/modules/*/routes.ts and the client fetches in src/.
 const PROBES: Probe[] = [
-  { page: 'Dashboard', url: '/api/dashboard', unpaginated: true, note: 'all inventory rows, filtered in memory' },
+  { page: 'Dashboard', url: '/api/dashboard', note: 'low-stock WHERE in SQL, top 20 + count (UI foundation)' },
   { page: 'Dashboard / Orders', url: '/api/jobs?limit=200', note: 'LIMIT 200 (server cap 500)' },
   { page: 'Quotes', url: '/api/jobs?limit=50', note: 'LIMIT 50' },
   { page: 'Quotes (search)', url: '/api/jobs?limit=50&q=decal', note: 'LIKE over title/PO/tags/file/customer in SQL, before LIMIT (Phase 1b)' },
@@ -36,9 +36,15 @@ const PROBES: Probe[] = [
   { page: 'Customers', url: '/api/customers', note: 'LIMIT 200; group-by over all jobs' },
   { page: 'Quick Order', url: '/api/customers?q=Walk-in', note: 'loads up to 2000 rows, filters in memory' },
   { page: 'Inventory', url: '/api/inventory', unpaginated: true },
-  { page: 'Inventory', url: '/api/inventory/reorder', unpaginated: true, note: 'full scan + in-memory sort' },
+  { page: 'Inventory (paged)', url: '/api/inventory?limit=50', note: 'page 1, name order, + count(*)' },
+  { page: 'Inventory (paged, search)', url: '/api/inventory?limit=50&q=red', note: 'LIKE over name/color/vendor in SQL' },
+  { page: 'Inventory (paged, deep)', url: '/api/inventory?limit=50&offset=4950', note: 'last page (OFFSET cost)' },
+  { page: 'Inventory (paged, low)', url: '/api/inventory?limit=50&low=1&sort=count', note: 'count <= Min, by count' },
+  { page: 'Inventory', url: '/api/inventory/reorder', unpaginated: true, note: 'low-only WHERE in SQL, in-memory sort' },
+  { page: 'Inventory (reorder, paged)', url: '/api/inventory/reorder?limit=50', note: 'urgency ORDER BY in SQL' },
+  { page: 'Inventory (usage, paged)', url: '/api/inventory/usage?limit=50', note: 'rate ORDER BY in SQL' },
   { page: 'Inventory', url: '/api/inventory/usage', unpaginated: true, note: 'full scan + in-memory sort' },
-  { page: 'Inventory', url: '/api/inventory/valuation', unpaginated: true, note: 'full scan, aggregated object' },
+  { page: 'Inventory', url: '/api/inventory/valuation', note: 'per-category SUM in SQL (UI foundation)' },
   { page: 'Inventory (item log)', url: '/api/inventory/1/history', note: 'LIMIT 50' },
   { page: 'Inventory / Quotes', url: '/api/roll-skus', unpaginated: true },
   { page: 'Inventory (cycle count)', url: '/api/cycle-counts/next' },
@@ -105,6 +111,7 @@ for (const probe of PROBES) {
     try {
       const j = JSON.parse(body.toString('utf8'));
       if (Array.isArray(j)) rows = String(j.length);
+      else if (Array.isArray(j?.rows)) rows = `${j.rows.length} of ${j.total}`;
     } catch { /* not JSON */ }
   }
   results.push({ probe, ms: median(times), kb: body.length / 1024, rows, status: last.statusCode });

@@ -1,20 +1,15 @@
-import { Routes, Route } from 'react-router-dom';
-import Layout from './components/Layout';
-import Dashboard from './pages/Dashboard';
-import Quotes from './modules/jobs/Quotes';
-import Orders from './modules/jobs/Orders';
-import Pos from './modules/payments/Pos';
-import Customers from './modules/customers/Customers';
-import QuickOrder from './modules/jobs/QuickOrder';
-import Inventory from './modules/inventory/Inventory';
-import Materials from './modules/materials/Materials';
-import Taxonomy from './modules/inventory/Taxonomy';
-import Settings from './pages/Settings';
+import { useEffect, useState } from 'react';
+import { useRoutes } from 'react-router-dom';
+import AppShell from './components/shell/AppShell';
 import SignIn from './components/SignIn';
 import ApprovalHost from './components/ApprovalDialog';
-import { useEffect, useState } from 'react';
+import { ROUTES } from './routes';
 import { get, getToken, setUnauthorizedHandler } from './lib/api';
 import { sessionUser, updateSessionUser, clearSession, type SessionUser } from './lib/session';
+
+function AppRoutes() {
+  return useRoutes([{ element: <AppShell />, children: ROUTES }]);
+}
 
 export default function App() {
   const [signedIn, setSignedIn] = useState(!!getToken() && !!sessionUser());
@@ -37,20 +32,7 @@ export default function App() {
   return (
     <>
       <ApprovalHost />
-      <Routes>
-        <Route element={<Layout />}>
-          <Route index element={<Dashboard />} />
-          <Route path="quotes" element={<Quotes />} />
-          <Route path="orders" element={<Orders />} />
-          <Route path="pos" element={<Pos />} />
-          <Route path="quick" element={<QuickOrder />} />
-          <Route path="customers" element={<Customers />} />
-          <Route path="inventory" element={<Inventory />} />
-          <Route path="materials" element={<Materials />} />
-          <Route path="taxonomy" element={<Taxonomy />} />
-          <Route path="settings" element={<Settings />} />
-        </Route>
-      </Routes>
+      <AppRoutes />
     </>
   );
 }

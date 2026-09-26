@@ -18,6 +18,7 @@
     "db:backup": "tsx server/db/backup-cli.ts",
     "db:restore": "tsx server/db/restore-cli.ts",
     "perf:baseline": "tsx scripts/perf-baseline.ts",
+    "tokens": "tsx scripts/gen-tokens.ts",
     "test": "vitest run"
   },
   "allowScripts": {

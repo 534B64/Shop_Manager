@@ -1,3 +1,4 @@
+import { Link } from 'react-router-dom';
 import { useEffect, useState } from 'react';
 import { THEMES, CUSTOM_ACCENTS, DEFAULT_TAX_RATE_PCT, type Theme } from '../../shared/domain';
 import { getPrefs, applyPrefs, type Prefs } from '../lib/theme';
@@ -126,7 +127,7 @@ export default function Settings() {
             </button>
           ))}
         </div>
-        {(prefs.theme === 'light' || prefs.theme === 'dark') && (
+        {(
           <div className="flex gap-3 mt-4 items-center">
             <span className="text-sm text-muted">Accent color:</span>
             {CUSTOM_ACCENTS.map((c) => (
@@ -148,10 +149,10 @@ export default function Settings() {
       <section className="bg-surface border border-line rounded-token p-5 mb-4 max-w-2xl">
         <h2 className="font-semibold text-lg mb-3">Admin</h2>
         {hasRole('admin') && (<>
-          <a href="/materials" className="text-accent underline">Manage materials & costs</a>
+          <Link to="/settings/materials" className="text-accent underline">Manage materials & costs</Link>
           <p className="text-sm text-muted mt-1 mb-3">Cost changes only affect future quotes.</p>
         </>)}
-        <a href="/taxonomy" className="text-accent underline">Manage inventory categories, units & suppliers</a>
+        <Link to="/settings/taxonomy" className="text-accent underline">Manage inventory categories, units & suppliers</Link>
         <p className="text-sm text-muted mt-1">Organizes inventory; never changes pricing or the stock check.</p>
       </section>
       </RoleGate>

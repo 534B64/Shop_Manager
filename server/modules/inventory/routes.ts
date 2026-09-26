@@ -1,18 +1,20 @@
-import type { FastifyInstance } from 'fastify';
-import { eq, desc, isNull, and, isNotNull, asc, lt } from 'drizzle-orm';
+import type { FastifyInstance, FastifyReply } from 'fastify';
+import { eq, desc, isNull, and, isNotNull, asc, lt, sql } from 'drizzle-orm';
 import { db, withTx, type Db } from '../../db/index.js';
 import { inventoryItems, inventoryAdjustments, inventoryBalances, locations, cycleCountLines, materials, materialColors, suppliers, categories } from '../../db/schema/index.js';
 import { availabilityCheck, acrossFromDims, type StockLineQuery, type StockResult } from '../../../shared/stockCheck.js';
 import { ADJUST_REASONS, type AdjustReason } from '../../../shared/domain.js';
 import { varianceFor, hasRepeatedVariance } from '../../../shared/countReview.js';
-import { urgencyCompare, daysUntilStockout } from '../../../shared/reorder.js';
-import { countUnitCost, extendedValueCents } from '../../../shared/costing.js';
+import { daysUntilStockout } from '../../../shared/reorder.js';
+import { countUnitCost } from '../../../shared/costing.js';
 import {
   inventorySettings, postTransaction, receive, adjust, transfer, reconcile, postedLine,
 } from './service.js';
 import { ledgerWrite, txnUser } from './http.js';
 import { requireApproval, requireRole, approvalSchema } from '../auth/index.js';
 import { audit } from '../audit/index.js';
+import { itemPage, reorderAll, reorderPage, usagePage, lowStockSummary } from './lists.js';
+import { parsePage, PagingError, type PageQuery } from '../../lib/paging.js';
 
 const isUniqueViolation = (e: unknown): boolean =>
   e instanceof Error && /unique/i.test(e.message);
@@ -62,8 +64,23 @@ async function stockCheckOne(materialId: number, color: string, acrossIn: number
 const UNKNOWN_STOCK: StockResult & { message: string | null } =
   { state: 'unknown', optimalWidth: null, useWidth: null, fittingInStock: [], message: null };
 
+/** The page asked for, null when unpaged, undefined after answering 400. */
+function pagedOr400(q: Record<string, unknown>, reply: FastifyReply): PageQuery | null | undefined {
+  try { return parsePage(q); } catch (e) {
+    if (!(e instanceof PagingError)) throw e;
+    reply.code(400).send({ error: 'bad_paging', message: e.message });
+    return undefined;
+  }
+}
+
 export async function inventoryRoutes(app: FastifyInstance) {
-  app.get('/api/inventory', async () => {
+  // Unpaged (bare array, every active item) unless limit/offset is given —
+  // then { rows, total, limit, offset } with filters/sort in SQL (lists.ts).
+  app.get('/api/inventory', async (req, reply) => {
+    const q = req.query as Record<string, unknown>;
+    const page = pagedOr400(q, reply);
+    if (page === undefined) return reply;
+    if (page) return itemPage(q, page);
     const rows = await db.select().from(inventoryItems);
     return rows.filter((r) => r.active);
   });
@@ -278,28 +295,12 @@ export async function inventoryRoutes(app: FastifyInstance) {
   // rate), rows without a rate ranked by how far below Min they sit. Order
   // quantity fills back to Max when one is set; the old 2×-threshold
   // heuristic stays as the fallback so items without a Max keep working.
-  app.get('/api/inventory/reorder', async () => {
-    const items = await db.select().from(inventoryItems);
-    const sups = await db.select().from(suppliers);
-    const supById = new Map(sups.map((s) => [s.id, s]));
-    return items
-      .filter((i) => i.active && i.count <= i.lowStockThreshold)
-      .sort(urgencyCompare)
-      .map((i) => {
-        const sup = i.supplierId != null ? supById.get(i.supplierId) : undefined;
-        return {
-          id: i.id, name: i.name, count: i.count, threshold: i.lowStockThreshold,
-          reorderMaxQty: i.reorderMaxQty,
-          suggestedQty: i.reorderMaxQty != null
-            ? Math.max(i.reorderMaxQty - i.count, 1)
-            : Math.max(i.lowStockThreshold * 2 - i.count, 1),
-          supplierId: i.supplierId, supplierName: sup?.name ?? i.vendor ?? null,
-          leadTimeDays: sup?.leadTimeDays ?? null,
-          lastCostCents: i.lastCostCents, purchaseUnit: i.purchaseUnit, countUnit: i.countUnit,
-          avgDailyUse: i.avgDailyUse,
-          daysUntilStockout: daysUntilStockout(i.count, i.avgDailyUse),
-        };
-      });
+  // Paged + filtered with limit/offset (lists.ts); same order either way.
+  app.get('/api/inventory/reorder', async (req, reply) => {
+    const q = req.query as Record<string, unknown>;
+    const page = pagedOr400(q, reply);
+    if (page === undefined) return reply;
+    return page ? reorderPage(q, page) : reorderAll();
   });
 
   // Usage view — replaced the manual-tap monthly trends 2026-07-07. The rate
@@ -307,7 +308,11 @@ export async function inventoryRoutes(app: FastifyInstance) {
   // captures ALL consumption — tracked sales, production use, waste — because
   // two physical counts bracket it. Items with no rate yet (fewer than two
   // counts) are listed so the gap is visible rather than invisible.
-  app.get('/api/inventory/usage', async () => {
+  app.get('/api/inventory/usage', async (req, reply) => {
+    const q = req.query as Record<string, unknown>;
+    const page = pagedOr400(q, reply);
+    if (page === undefined) return reply;
+    if (page) return usagePage(q, page);
     const items = await db.select().from(inventoryItems);
     return items
       .filter((i) => i.active)
@@ -324,20 +329,27 @@ export async function inventoryRoutes(app: FastifyInstance) {
   // yet (never received with a cost, no last cost) are counted separately so
   // the total is honest about what it excludes.
   app.get('/api/inventory/valuation', async () => {
-    const items = await db.select().from(inventoryItems);
+    // Summed per category in SQL (UI foundation) — same math as
+    // extendedValueCents: max(on-hand, 0) × average cost, priced items only.
+    const perCat = await db.select({
+      categoryId: inventoryItems.categoryId,
+      valueCents: sql<number>`coalesce(sum(case when ${inventoryItems.avgCostCents} > 0 then max(${inventoryItems.count}, 0) * ${inventoryItems.avgCostCents} end), 0)`,
+      priced: sql<number>`sum(${inventoryItems.avgCostCents} > 0)`,
+      unpriced: sql<number>`sum(${inventoryItems.avgCostCents} <= 0)`,
+    }).from(inventoryItems).where(eq(inventoryItems.active, true)).groupBy(inventoryItems.categoryId);
     const cats = await db.select().from(categories);
     const catName = new Map(cats.map((c) => [c.id, c.name]));
     let totalCents = 0, pricedItems = 0, unpricedItems = 0;
     const byCat = new Map<string, { valueCents: number; items: number }>();
-    for (const i of items) {
-      if (!i.active) continue;
-      if (i.avgCostCents <= 0) { unpricedItems++; continue; }
-      const v = extendedValueCents(i.count, i.avgCostCents);
+    for (const c of perCat) {
+      const v = Number(c.valueCents), n = Number(c.priced);
+      unpricedItems += Number(c.unpriced);
+      if (n === 0) continue;
       totalCents += v;
-      pricedItems++;
-      const key = i.categoryId != null ? catName.get(i.categoryId) ?? 'Other' : 'Other';
+      pricedItems += n;
+      const key = c.categoryId != null ? catName.get(c.categoryId) ?? 'Other' : 'Other';
       const cur = byCat.get(key) ?? { valueCents: 0, items: 0 };
-      byCat.set(key, { valueCents: cur.valueCents + v, items: cur.items + 1 });
+      byCat.set(key, { valueCents: cur.valueCents + v, items: cur.items + n });
     }
     return {
       totalCents, pricedItems, unpricedItems,
@@ -488,10 +500,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
     return { results };
   });
 
-  // Dashboard summary: due soon / owed / low stock in one small payload.
-  app.get('/api/dashboard', async () => {
-    const items = await db.select().from(inventoryItems);
-    const low = items.filter((i) => i.active && i.count <= i.lowStockThreshold);
-    return { lowStock: low.map((i) => ({ id: i.id, name: i.name, count: i.count, threshold: i.lowStockThreshold })) };
-  });
+  // Dashboard summary: the most urgent low-stock items + the total, in SQL
+  // (was a full-table read filtered in JS).
+  app.get('/api/dashboard', async () => lowStockSummary());
 }
