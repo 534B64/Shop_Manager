@@ -58,7 +58,7 @@ export default function RecordPaymentDialog({ job, onClose, onDone }: { job: Bal
         {method === 'cash' && (
           <TextField label="Cash tendered $ (optional)" inputMode="decimal" value={tendered} onChange={(e) => setTendered(e.target.value)}
             error={tendered.trim() ? check.problem : null}
-            supportingText={check.change != null ? `Change due: ${formatCents(check.change)}` : 'What the customer handed over, to work out change.'} />
+            supportingText="What the customer handed over, to work out change." />
         )}
         {check.change != null && <p className="text-headline-small text-center tabular-nums" aria-live="polite">Change {formatCents(check.change)}</p>}
         {over > 0 && (
@@ -67,9 +67,9 @@ export default function RecordPaymentDialog({ job, onClose, onDone }: { job: Bal
             <Checkbox label="Record the overpayment anyway" checked={overOk} onChange={(e) => setOverOk(e.target.checked)} />
           </div>
         )}
-        {drawerClosed && method === 'cash' && <div className="rounded-shape-small border border-outline-variant p-3"><OpenDrawerForm compact onOpened={() => { setDrawerClosed(false); setError(null); }} /></div>}
         {error && <p role="alert" className="text-body-medium text-error">{error}</p>}
       </form>
+        {drawerClosed && method === 'cash' && <div className="mt-3 rounded-shape-small border border-outline-variant p-3"><OpenDrawerForm compact onOpened={() => { setDrawerClosed(false); setError(null); }} /></div>}
     </Dialog>
   );
 }

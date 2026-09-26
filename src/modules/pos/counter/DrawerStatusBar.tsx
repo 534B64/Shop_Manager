@@ -23,7 +23,7 @@ export default function DrawerStatusBar({ drawer, loading, error, onRetry }: {
       </p>
       {error
         ? <Button variant="elevated" touch onClick={onRetry}>Try again</Button>
-        : <Button variant={open ? "elevated" : "filled"} touch to="/pos/drawer">{open ? 'Drawer' : 'Open drawer'}</Button>}
+        : <Button variant={open ? 'elevated' : 'filled'} touch to="/pos/drawer">{open ? 'Drawer' : 'Open drawer'}</Button>}
     </div>
   );
 }

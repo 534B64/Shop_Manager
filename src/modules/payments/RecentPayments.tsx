@@ -22,7 +22,7 @@ export default function RecentPayments({ q, version, onRefund, onVoid }: {
     { key: 'amt', header: 'Amount', align: 'right', render: (p) => (
       <b className={cx('tabular-nums', p.kind === 'refund' && !p.voidedAt && 'text-error', p.voidedAt && 'line-through text-on-surface-variant')}>
         {p.kind === 'refund' ? '−' : ''}{formatCents(p.amountCents)}</b>) },
-    { key: 'act', header: <span className="sr-only">Actions</span>, align: 'right', render: (p) => !p.voidedAt && (
+    { key: 'act', header: 'Actions', align: 'right', render: (p) => !p.voidedAt && (
       <span className="inline-flex gap-1">
         {p.kind === 'payment' && <Button variant="outlined" touch onClick={() => onRefund(p)} aria-label={`Refund ${formatCents(p.amountCents)} on ${p.jobTitle ?? 'job'}`}>Refund</Button>}
         <Button variant="text" touch onClick={() => onVoid(p)} aria-label={`Void ${p.kind} of ${formatCents(p.amountCents)}`}>Void</Button>

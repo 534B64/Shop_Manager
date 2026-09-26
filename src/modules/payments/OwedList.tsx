@@ -11,7 +11,7 @@ export default function OwedList({ q, version, onPay }: { q: string; version: nu
     { key: 'paid', header: 'Paid', align: 'right', hideOnNarrow: true,
       render: (b) => <span className="tabular-nums">{formatCents(b.paidCents)} of {formatCents(b.finalPriceCents ?? 0)}{b.returnedCents > 0 ? ` (−${formatCents(b.returnedCents)} returned)` : ''}</span> },
     { key: 'owed', header: 'Due', align: 'right', render: (b) => <b className="tabular-nums text-title-medium">{formatCents(b.owedCents)}</b> },
-    { key: 'act', header: <span className="sr-only">Actions</span>, align: 'right',
+    { key: 'act', header: 'Actions', align: 'right',
       render: (b) => <Button touch variant="tonal" onClick={() => onPay(b)} aria-label={`Record payment on ${b.title}`}>Record payment</Button> },
   ];
   return (
