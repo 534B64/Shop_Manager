@@ -34,6 +34,9 @@ The reference page is the Dashboard (`src/pages/dashboard/`) — copy its shape.
 - Shape: `rounded-shape-extra-small|small|medium|large|extra-large|full`. Elevation: `shadow-elevation-0…5`.
 - State layers: add `state-layer` to anything clickable that isn't an m3 component (hover/focus/press overlay at
   the token opacities). Focus rings are global (`:focus-visible`) — don't remove outlines.
+  **Never put `state-layer` on a `<tr>`**: its `::before` box renders as an extra table cell and shifts the row.
+  Clickable table rows use `hover:bg-on-surface/[0.08]` (DataTable does this for `onRowClick`); put
+  `state-layer` on a button *inside* a cell instead.
 - Themes: `data-theme="light" | "dark" | "minimal"` (High Contrast) on `<html>`. The account's accent is the seed
   of its scheme in all three themes (`src/lib/theme.ts` → `applyPrefs`). Check your page in all three.
 
@@ -57,7 +60,7 @@ The reference page is the Dashboard (`src/pages/dashboard/`) — copy its shape.
 ## Data
 
 `src/lib/api.ts` stays the only fetch layer (token, 401 → sign-in, manager-approval retry, network retry).
-On top of it, `src/lib/query.ts`:
+On top of it, `src/lib/query.ts` (and the helpers listed under "Shared hooks and helpers" below):
 
 ```tsx
 const q = useQuery<Summary>('/api/dashboard');          // { data, error, loading, reload, setData }
@@ -80,13 +83,52 @@ GET /api/inventory?limit=25&offset=50&q=red&sort=count&dir=desc
 ```
 
 - `limit` 1–200 (default 25 if only `offset` is given), `offset` ≥ 0.
-- Paged today: `/api/inventory`, `/api/inventory/reorder`, `/api/inventory/usage`.
-- Inventory filters (all three endpoints): `q` (name/color/vendor, contains), `kind=roll|other`, `materialId`,
-  `color`, `widthIn`, `categoryId` (or `none`), `supplierId`, `low=1`, `stock=low|out|ok`.
-- `/api/inventory` sort: `sort=name|count|threshold|created|value`, `dir=asc|desc` (default name asc).
-  Reorder is always most-urgent-first; usage is fastest-moving first.
 - New paged endpoints: use `server/lib/paging.ts` (`parsePage`, `parseSort`, `likePattern`), filter + sort in SQL,
   return `{ rows, total, limit, offset }`, keep the old unpaged shape when no paging params are sent, and add tests.
+
+### Paged endpoints (what each page uses)
+
+Offset-paged — `{ rows, total, limit, offset }`:
+
+| Endpoint | Filters / sort | Used by |
+|---|---|---|
+| `/api/inventory` | `q` + `match=contains\|starts\|ends\|exact` (name/color/vendor), `ids=1,2,…` (≤ 200), `kind=roll\|other`, `materialId`, `color`, `widthIn`, `categoryId` (or `none`), `supplierId`, `low=1`, `stock=low\|out\|ok`; `sort=name\|count\|threshold\|created\|value\|size\|color\|low`, `dir`; `group=material\|color\|size\|unit\|category` orders by the group first and adds `groupKey`/`groupLabel` per row + `groups: [{key,label,count,low}]` (no key = "Other / Consumables", last) | `/inventory` (default `group=material`), counts, pickers |
+| `/api/inventory/reorder`, `/api/inventory/usage` | the item filters; reorder = most urgent first, usage = fastest first | `/inventory/reorder` |
+| `/api/customers` | `q` (name / email / phone digits), `includeArchived=1`, `sort=recent\|name\|created`, `dir` | `/customers`, the customer pickers (`?q=…&limit=10&offset=0`), Quick Order's Walk-in lookup |
+| `/api/jobs` | `q`, `status` (one or a comma list); newest first. **Quirk:** paged only when `offset` is sent — `?limit=` alone keeps the old bare array (usePaged always sends `offset`, so pages are fine) | Orders list, Quotes "recent jobs" |
+| `/api/balances` | `q`; largest balance first; also `totalOwedCents` | Payments "Owed", Dashboard owed card |
+| `/api/payments` | `q` (job title / customer); newest first | Payments, Quick Order "Today" (`?limit=12&offset=0`) |
+| `/api/cycle-counts` | history, newest first (default 25) | `/inventory/counts` |
+
+Keyset-paged, newest first — `?limit=&before=<id>` → `{ rows, nextBefore }` (no total; show "Page N"):
+
+| Endpoint | Filters | Used by |
+|---|---|---|
+| `/api/invoices` | `from`, `to`, `customerId`, `jobId`, `number`, `status=issued\|voided` | `/pos/invoices`, customer detail |
+| `/api/returns` | `from`, `to` | `/pos/returns` |
+| `/api/drawer` | — | `/pos/drawer`, Reports |
+| `/api/audit` (admin) | `entity`, `entityId`, `userId`, `from`, `to` | `/audit` |
+| `/api/approvals` (admin) | `action`, `entity`, `entityId`, `userId`, `from`, `to` | `/audit` (Approvals tab) |
+| `/api/inventory/transactions` (manager+) | `type`, `itemId`, `from`, `to` | `/inventory/adjustments`, Receiving's recent receipts |
+| `/api/inventory/:id/transactions` | — | item detail |
+
+Single-call summaries (added up in SQL, never walked in the browser): `/api/dashboard`, `/api/jobs/board`
+(every lane's first `limit` + counts), `/api/jobs/due-soon`, `/api/inventory/valuation`,
+`/api/reports/summary?from&to` (payments; `from` may be a full timestamp, e.g. local midnight),
+`/api/reports/sales?from&to` (manager+, invoices/voids/returns — the Z-report rule).
+
+### Shared hooks and helpers
+
+| Where | What |
+|---|---|
+| `lib/query.ts` | `useQuery(url \| null)`, `usePaged(url, params, {pageSize})` (`data` = the whole last response for extras like inventory `groups`), `withParams`, `startsGroup` |
+| `lib/keysetPaging.ts` | `useKeyset(url \| null, params, pageSize)` (one page + Previous/Next) and `useKeysetMore(url \| null, params, limit)` ("Load more", rows accumulate); `KeysetPage` type |
+| `components/KeysetPager.tsx` | the one pager for keyset lists; pass `touch` on POS screens |
+| `components/ConfirmDialog.tsx` | yes/no dialog (never `window.confirm/prompt/alert`); shows the error inline, ignores a cancelled approval |
+| `components/DateRangeFields.tsx` | From/To date pair (`DateRange`), used by Reports, invoices, returns, audit |
+| `lib/errorText.ts` | `errorText(e, fallback)` (the one error-to-words function), `approvalCancelled`, `isDrawerClosed`, `lockedInvoice`, `isNetworkError` |
+| `lib/ref.ts` | `newRef()` for every `clientRef` / client id — `crypto.randomUUID` does not exist on the shop's plain-http LAN origin, so it falls back to `getRandomValues` |
+| `DataTable` `groupOf` / `renderGroup` / `hideRow` | header rows where the group key changes (inventory group-by) |
 
 ## Routes
 
@@ -98,12 +140,30 @@ All routes live in `src/routes.tsx`. To add a page:
 4. Renaming a URL? Add a `<Navigate replace>` from the old path so bookmarks survive.
 5. Read URL state with `useParams` / `useSearchParams` (filters and the open record belong in the URL).
 
-Currently several routes point at the old all-in-one page (e.g. every `/inventory/*` renders `Inventory`,
-`/quotes/:id` renders `Quotes`, `/customers/:id` renders `Customers`). When you split a page, make each route
-render its own view and read `:id` from the URL. `/pos/counter`, `/pos/invoices[/:number]`, `/pos/returns/new`, `/pos/drawer`, `/reports`, `/audit` are placeholders (`ComingSoon`).
-For now `/pos` itself redirects to `/payments` (it was the Payments page for years, so bookmarks go
-there); when the counter-sale page is built, move it from `/pos/counter` to `/pos`, drop the redirect, and point
-the POS nav item at `/pos`.
+### Route map (wave 2)
+
+| Path | Page | Min role |
+|---|---|---|
+| `/` | Dashboard (`pages/dashboard/`) | |
+| `/quotes` → `/quotes/new`, `/quotes/:id` | quote / order editor (`modules/jobs/quote/`) | |
+| `/orders` | board + list (`modules/jobs/orders/`) | |
+| `/quick` | Quick Order (`modules/jobs/quick/`) | |
+| `/pos` | counter sale (`modules/pos/counter/`); `/pos/counter` redirects here | |
+| `/pos/drawer`, `/pos/drawer/:id` | cash drawer + Z-report (`modules/pos/drawer/`) | close = manager (server) |
+| `/pos/invoices`, `/pos/invoices/:number` | invoices + detail/void (`modules/pos/invoices/`) | void = approval |
+| `/pos/returns`, `/pos/returns/new`, `/pos/returns/:id` | returns (`modules/pos/returns/`) | refund over threshold = approval |
+| `/payments` | Payments (`modules/payments/`) | |
+| `/customers`, `/customers/:id` | customer list + detail (`modules/customers/`) | |
+| `/inventory` | item list (`modules/inventory/list/`) | |
+| `/inventory/:id` | item detail (`modules/inventory/item/`) | |
+| `/inventory/receiving`, `/inventory/counts`, `/inventory/counts/:id`, `/inventory/reorder` | receiving, cycle counts, needs ordering | |
+| `/inventory/adjustments` | ledger across items | manager |
+| `/reports` | Reports hub (`pages/reports/`; the sales card shows for manager+) | |
+| `/settings` | My account + theme (`pages/settings/account/`) | |
+| `/settings/users`, `/settings/shop`, `/settings/materials`, `/settings/locations` | admin settings | admin |
+| `/settings/taxonomy`, `/settings/suppliers` | taxonomy, suppliers | manager |
+| `/audit` | audit log + approvals (`pages/audit/`) | admin |
+| `/materials`, `/taxonomy` | redirects to their `/settings/…` pages | |
 
 ## Checklist before you hand off
 

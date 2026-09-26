@@ -153,6 +153,15 @@ expected/counted/over-short) into the session. `GET /api/drawer/:id/z-report`
 `final: false`. Invoices, voids, returns are stamped with the open session so
 the Z-report counts them.
 
+**Date-range sales (wave 2, 2026-09-26):** `GET /api/reports/sales?from&to`
+(manager+, `server/modules/sales/reports.ts`) adds up the same three parts in
+SQL for any date range — invoices issued, what voids made in the range
+cancelled (`net_total_cents`/`net_tax_cents`), returns made in the range —
+and nets them with the Z-report's own rule (`netSales` in `shared/invoice.ts`),
+so a day's figures equal that day's Z-reports. A void or return counts on the
+day it happened, not the invoice's day. The Reports page's sales card calls it
+once instead of reading invoices in the browser.
+
 ### Module
 
 New `server/modules/sales` (routes/service/index, ADR 0001). `POST

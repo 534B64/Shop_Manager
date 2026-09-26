@@ -119,5 +119,8 @@ password goes away; the feature set otherwise does not change.
   server on a LAN; a 4-digit PIN is still a small keyspace, so the owner should
   prefer 6 digits for managers/admins.
 - Role hiding in the client is convenience only; the server is the authority.
-- No approvals viewer/export yet — rows are queryable in SQLite; a CSV export
-  should follow per the "every money table gets a CSV" rule.
+- Approvals viewer (wave 2, 2026-09-26): `GET /api/approvals` (admin) lists who
+  approved what, newest first, with requester/approver names, keyset-paged on id
+  like the audit log (`?action=&entity=&entityId=&userId=&from=&to=&limit=≤200&before=`),
+  shown on the `/audit` page. Read-only — the table stays append-only. A CSV
+  export should still follow per the "every money table gets a CSV" rule.
