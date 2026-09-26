@@ -161,6 +161,16 @@ used in code, docs, or conversation, it means exactly this.
   made: who, when, what it looked like before and after, and which manager
   approved it when approval was needed. It can be read and exported, never
   edited.
+- **Production data** — the shop's real records: real customers, sales, money
+  and stock. There is exactly one production database, started once with a
+  single admin and nothing made up.
+- **Demo data** — made-up practice records (sample customers, jobs, and
+  accounts with well-known PINs) kept apart from production data and always
+  marked "DEMO DATA" on screen. Demo data never mixes into production data.
+- **Backup** — a checked copy of the whole shop's records as they stood at one
+  moment. **Restoring** one puts the shop back to that moment; anything entered
+  after it must be re-entered, and the records being replaced are set aside,
+  never thrown away.
 
 ### Explicit non-concepts
 

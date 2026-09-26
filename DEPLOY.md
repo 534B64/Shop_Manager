@@ -15,9 +15,9 @@
 ## Good things already set up for you
 - Runs on **port 3000**.
 - The database is one file at `/app/data/dp-erp.db`. You map `/app/data` to a NAS folder so it's permanent and backed up.
-- On its **first start it builds the database and loads your price list automatically** — no extra setup, and no fake sample jobs.
+- On its **first start it builds the database and loads your price list automatically** — no fake sample jobs. Step 5 turns it into the labeled **production** database with your admin account.
+- **Backs itself up every night at 2 AM** into `/app/data/backups`, checks each copy, keeps 14 days + 8 weeks (`docs/BACKUP.md`).
 - Auto-restarts if the NAS reboots or loses power.
-- Default admin password is `admin` — change it after first login.
 
 ---
 
@@ -62,18 +62,26 @@ http://192.168.1.50:3000
 
 (use your NAS's actual address). Bookmark it, or set it as the browser's homepage. **That is the entire setup for the other PCs.**
 
-## Step 5 — First-time setup inside the app
-1. Open **Settings** and change the admin password from `admin`.
+## Step 5 — Set up the real (production) database
+Follow **`docs/PRODUCTION-SETUP.md`**: one command in the container's terminal
+(`npm run db:init-prod`) creates your admin account and labels the database as production.
+Don't fill in the app's own first-run "create admin" screen instead — then the database stays unlabeled.
+After that:
+1. Sign in. There must be **no DEMO DATA strip** at the top.
 2. Add an account for each person (**Settings → Accounts**).
 3. Glance at **Materials** to confirm your price list looks right.
 
 ---
 
 ## Backups
-Your entire business data is the `data` folder from Step 1. Because it sits in your cloud-backed-up share, it's already covered. Once in a while, confirm those files show up in your backups — there will be three: `dp-erp.db`, `dp-erp.db-wal`, and `dp-erp.db-shm`. Backing up the whole `data` folder captures all of them.
+Your entire business data is the `data` folder from Step 1. The app makes a **checked backup every night at 2 AM** into `data/backups/` (one complete file per night; 14 days + 8 weeks kept), and because `data` sits in your cloud-backed-up share, those go offsite too.
+- Make sure the NAS cloud backup includes `data/backups` and runs **after 2 AM**.
+- Set your time zone in `docker-compose.yml` (`TZ:` line) so 2 AM is shop time.
+- Restoring, the daily check, the monthly restore test and what to do about a corrupt database: **`docs/BACKUP.md`**.
+- Don't rely on the cloud's copy of the live `dp-erp.db` / `-wal` / `-shm` files — they can be caught mid-sale. The files in `data/backups` are the ones to restore from.
 
 ## Updating to a new version later
-Rebuild (Option A) or re-import (Option B) the image and recreate the container. Your `data` folder stays exactly where it is, so **no data is lost** — you just get the new features.
+First take a backup by hand (container terminal: `npm run db:backup`, see `docs/BACKUP.md`). Then rebuild (Option A) or re-import (Option B) the image and recreate the container. Your `data` folder stays exactly where it is, so **no data is lost** — you just get the new features. The app upgrades the database itself on start.
 
 ## If something goes wrong
 - **A PC can't load the page:** check it's on the shop network and the address/port are right; confirm the container is running in Container Manager.

@@ -1,16 +1,44 @@
-// Realistic dev seed data for Decals Plus.
+// Realistic DEMO seed data for Decals Plus — never real data (ADR 0008).
 // Idempotent: materials only when the table is empty; sample jobs only when there are none;
 // demo accounts only when missing by name.
+//
+// Target: DB_PATH, default ./data/demo.db (NOT the server default dp-erp.db).
+// Labels the database `dataset = demo`, and refuses (see demoSeedProblem in
+// dataset.ts) a production-labeled database, an unlabeled file named
+// dp-erp.db, and an unlabeled database that already has data.
 //
 // Demo accounts (DEV ONLY — roles + PINs, ADR 0004):
 //   Josiah — admin   — PIN 1234
 //   Amy    — manager — PIN 2222
 //   Sam    — cashier — PIN 3333
-import { db, runMigrations } from './index.js';
-import { customers, materials, jobs } from './schema/index.js';
-import { seedDemoUsers } from './seed-users.js';
+import fs from 'node:fs';
+import { createClient } from '@libsql/client';
+import { demoSeedProblem, readDataset, hasBusinessData, markDataset, type Dataset } from './dataset.js';
+
+const dbPath = process.env.DB_PATH ?? './data/demo.db';
+{
+  // Decide before server/db opens (and possibly creates) the file.
+  let facts: { dataset: Dataset | null; hasData: boolean } = { dataset: null, hasData: false };
+  if (fs.existsSync(dbPath)) {
+    const c = createClient({ url: `file:${dbPath}` });
+    try { facts = { dataset: await readDataset(c), hasData: await hasBusinessData(c) }; } finally { c.close(); }
+  }
+  const problem = demoSeedProblem({ dbPath, ...facts });
+  if (problem) {
+    console.error(`\ndb:seed: REFUSED — ${problem}\n`);
+    process.exit(1);
+  }
+}
+process.env.DB_PATH = dbPath;
+const { db, runMigrations } = await import('./index.js');
+const { customers, materials, jobs } = await import('./schema/index.js');
+const { seedDemoUsers } = await import('./seed-users.js');
 
 await runMigrations();
+{
+  const c = createClient({ url: `file:${dbPath}` });
+  try { await markDataset(c, 'demo'); } finally { c.close(); }
+}
 const usersAdded = await seedDemoUsers();
 
 // The price book may already be inserted by the migrations — only seed materials
@@ -104,5 +132,5 @@ await db.insert(jobs).values([
   },
 ]);
 
-console.log(`Seed complete: price book ensured, ${usersAdded} demo account(s) added, sample customers/jobs ensured.`);
+console.log(`Demo seed complete (${dbPath}, dataset = demo): price book ensured, ${usersAdded} demo account(s) added, sample customers/jobs ensured.`);
 process.exit(0);

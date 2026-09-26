@@ -6,5 +6,7 @@ echo  Shop Manager - Installing dependencies
 echo ============================================
 call npm install
 echo.
-echo Done. Next: double-click 2-Seed-Database.bat
+echo Done. Next:
+echo   - to practice with FAKE data:  2-Seed-Database.bat, then 3-Start-Dev.bat
+echo   - to set up the REAL shop:     8-Init-Production.bat, then 4-Start-Production.bat
 pause

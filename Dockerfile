@@ -20,6 +20,9 @@ COPY tsconfig.json ./
 # SQLite lives here — map this to a NAS folder that's in the cloud-backup pipeline.
 VOLUME /app/data
 ENV DB_PATH=/app/data/dp-erp.db
+# Nightly verified backup inside the app (ADR 0008, docs/BACKUP.md) — on the same volume.
+ENV BACKUP_DIR=/app/data/backups
+ENV BACKUP_HOUR=2
 
 EXPOSE 3000
 CMD ["npx", "tsx", "server/index.ts"]

@@ -5,5 +5,20 @@ services:
       - '3000:3000'
     volumes:
       # Put ./data inside the NAS share that already backs up to the cloud.
+      # It holds the live database (dp-erp.db + -wal/-shm) AND data/backups/,
+      # the verified nightly copies (docs/BACKUP.md) — both must be on this volume.
       - ./data:/app/data
+    environment:
+      # Nightly verified backup at this hour (0-23) into /app/data/backups,
+      # keeping the newest backup of each of the last 14 days and 8 weeks.
+      # (Same defaults are baked into the image; change them here if needed.)
+      BACKUP_HOUR: '2'
+      BACKUP_DIR: /app/data/backups
+      BACKUP_KEEP_DAILY: '14'
+      BACKUP_KEEP_WEEKLY: '8'
+      # Uncomment and set your time zone so "2" means 2 AM shop time
+      # (without it the container uses UTC — backups still run, just at a different hour).
+      # TZ: America/Chicago
+    # Passes "docker stop" on to the app so it shuts down cleanly.
+    init: true
     restart: unless-stopped

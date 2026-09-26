@@ -29,7 +29,8 @@ Follow `DEPLOY.md` for the container setup, then:
 - [ ] Pull the wifi mid-save once (airplane-mode a laptop while saving a
       quote): the app should retry or tell you it's safe to retry — no
       duplicate job, no lost draft.
-- [ ] Change the admin password off the default `admin` (Settings → admin).
+- [ ] The real database was set up with `docs/PRODUCTION-SETUP.md`: signing in
+      shows only real accounts and **no DEMO DATA strip**.
 
 **Record:** the NAS IP/bookmark URL, and anything that felt slow or flaky.
 
@@ -42,24 +43,39 @@ pipeline, and a backup can actually be turned back into a working app. Until
 a restore has been done once, the backup is an assumption, not a recovery
 plan.
 
-- [ ] Find the live data folder on the NAS (the folder mapped to `/app/data`).
-      Confirm it contains `dp-erp.db` — and possibly `dp-erp.db-wal` /
-      `dp-erp.db-shm` (normal companions; back up all three).
-- [ ] Confirm that folder is covered by the NAS backup job / cloud sync —
-      look at the backup tool's file list, don't assume.
-- [ ] Check the cloud side: can you see a recent copy of `dp-erp.db` there,
-      with a timestamp from the last day or two?
-- [ ] **Restore drill:** copy the backed-up `dp-erp.db` (+ wal/shm if present)
-      into a fresh folder, point a scratch container at it (same
-      `docker-compose.yml`, different folder + port), start it, and open it in
-      a browser.
-- [ ] In the scratch copy: today's jobs are there, payments are there, an
-      inventory count matches reality.
-- [ ] Delete the scratch container when done, so nobody ever enters real data
-      into it by mistake.
+The app makes a checked backup every night (`docs/BACKUP.md` has the full
+procedure; this drill proves it on the real NAS).
 
-**Record:** the date of the drill and how old the backup copy was. Repeat
-once or twice a year, or after any change to the backup setup.
+- [ ] Find the live data folder on the NAS (the folder mapped to `/app/data`).
+      Confirm it contains `dp-erp.db` and a `backups` folder with a file
+      named with **last night's date**, e.g. `dp-erp-2026-10-03_020000.db`.
+- [ ] Container Manager → dp-erp → Log: find `backup OK: …` for last night
+      (and no `BACKUP FAILED`).
+- [ ] Take one by hand while the app is in use: container terminal →
+      `npm run db:backup` → it prints `BACKUP OK`.
+- [ ] Confirm `data/backups` is covered by the NAS backup job / cloud sync —
+      look at the backup tool's folder list, don't assume. It should run after 2 AM.
+- [ ] Check the cloud side: can you see `data/backups/` with a file from the
+      last day or two?
+- [ ] **Restore test (no risk to live data):** over SSH, restore the newest backup
+      into a test folder:
+      `sudo docker compose run --rm -e DB_PATH=/app/data/restore-test/dp-erp.db dp-erp npm run db:restore -- /app/data/backups/<newest>.db`
+      → `RESTORE OK` with row counts.
+- [ ] **Open it in a browser (once or twice a year):** copy the project folder to
+      `dp-erp-scratch` **without its `data` folder**, in its `docker-compose.yml`
+      change the port to `'3001:3000'` and set `BACKUP_HOUR: ''` (no backups
+      from the scratch copy); make `dp-erp-scratch/data/` and copy the
+      `restore-test/dp-erp.db` file into it; start it and open `http://<NAS>:3001`.
+      Today's jobs are there, payments are there, an inventory count matches reality.
+- [ ] **Try the refusal once:** with the live app running, run
+      `npm run db:restore -- <any backup>` in its terminal → it must say
+      `RESTORE REFUSED — the app is running`.
+- [ ] Delete the `restore-test` folder and the scratch container + folder when
+      done, so nobody ever enters real data into a copy by mistake.
+
+**Record:** the date of the drill, the backup file used, and its jobs count.
+Repeat the restore test monthly (5 minutes, see `docs/BACKUP.md`), the
+browser version once or twice a year or after any change to the backup setup.
 
 ---
 

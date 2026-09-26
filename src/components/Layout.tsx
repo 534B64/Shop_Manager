@@ -1,5 +1,6 @@
 import { NavLink, Outlet } from 'react-router-dom';
 import { sessionUser, signOut } from '../lib/session';
+import DemoBanner from './DemoBanner';
 
 const navItems = [
   { to: '/', label: 'Dashboard', end: true },
@@ -49,6 +50,7 @@ export default function Layout() {
       {/* No max-width cap — pages size to the window. Dense pages go full
           width; forms/modals keep their own sane caps. */}
       <main className="flex-1 p-6 min-w-0">
+        <DemoBanner />
         <Outlet />
       </main>
     </div>

@@ -9,12 +9,14 @@
 // Usage:  DB_PATH=./data/perf-test.db npm run db:seed:perf
 //
 // Refuses to run unless DB_PATH is set explicitly AND does not contain
-// "dp-erp.db" (the production filename). Refuses a DB that already has jobs
+// "dp-erp.db" (the production filename), and refuses a production-labeled DB
+// (ADR 0008); labels what it fills dataset = demo. Refuses a DB that already has jobs
 // or customers (delete the file and rerun). Deterministic: a seeded PRNG and a
 // fixed anchor date, so every run produces identical data.
-import { requireSafePerfDb } from './perf-guard.js';
+import { requireSafePerfDb, refuseProductionDb } from './perf-guard.js';
 
 requireSafePerfDb('db:seed:perf');
+await refuseProductionDb('db:seed:perf');
 
 // Dynamic import: server/db/index.ts reads DB_PATH (and creates the file) at
 // import time, so the guard above must run first.
@@ -73,6 +75,9 @@ if (nJobs > 0 || nCust > 0 || nItems > 0) {
   process.exit(1);
 }
 
+// Label it demo (ADR 0008) — only once we know it holds nothing else.
+await db.run(sql`INSERT OR IGNORE INTO settings (key, value)
+  VALUES ('dataset', 'demo'), ('datasetCreatedAt', ${new Date().toISOString()})`);
 await seedDemoUsers();
 
 // ---------------- reference data ----------------
