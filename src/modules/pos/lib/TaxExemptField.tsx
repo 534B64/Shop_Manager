@@ -1,6 +1,7 @@
 // Sale-level "Tax exempt" switch (owner decision D10): counter sales are taxed
 // unless this is on, and then the server needs a short reason, which is kept
-// on the invoice and in the audit log. Used on /pos and /quick.
+// on the invoice and in the audit log. Used on /pos (the only counter-sale
+// screen — Quick Order was retired into it, D15).
 import { Chip, Switch, TextField } from '../../../components/m3';
 import { TAX_EXEMPT_REASONS, TAX_EXEMPT_REASON_MAX, taxExemptReason } from '../../../../shared/invoice';
 import type { TaxExemption } from '../counter/cart';

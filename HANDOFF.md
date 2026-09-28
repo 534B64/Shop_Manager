@@ -23,7 +23,7 @@ architecture, not every session — day-to-day progress lives in `TASKS.md`.
   codes + immutable session snapshots (`cycle_count_lines`), count-derived
   avg daily usage → AUTO reorder-point suggestion, Min/Max + urgency-sorted
   needs-ordering view, receiving with per-receipt cost history, counter-sale
-  deduction via Quick Order's optional from-stock picker (`recordSale`,
+  deduction via /pos's optional from-stock picker (`recordSale`,
   payments → inventory via the module interface), and valuation / cost-trend
   / variance-trend reports. Migration `0012` (hand-written; drizzle-kit
   generate still blocked by the snapshot-meta collision). Suite: 147 tests.
@@ -55,7 +55,7 @@ architecture, not every session — day-to-day progress lives in `TASKS.md`.
   Migrations are checked into `server/db/migrations/` and run automatically on
   every `buildApp()` call; `server/db/index.ts` must not move (it resolves the
   migrations folder relative to itself).
-- `src/modules/<domain>/*.tsx` — domain pages (Quotes/Orders/QuickOrder under
+- `src/modules/<domain>/*.tsx` — domain pages (Quotes/Orders under
   jobs, Pos under payments, Inventory/Taxonomy under inventory, etc.);
   Dashboard, Settings, `src/components/`, and `src/lib/` stay app-level.
   `src/lib/ui.ts` is a shared style-primitives module; adoption across pages

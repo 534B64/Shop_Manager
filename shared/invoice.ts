@@ -83,8 +83,8 @@ export interface CounterLineInput { qty: number; subtotalCents: number; taxable?
 /**
  * Price a counter sale the way POST /api/pos/sale does: every line is taxed
  * unless it says `taxable: false` (the sale-level `taxable` sets the default),
- * and a tax-exempt sale taxes nothing. No discount at the counter. The /pos and
- * Quick Order previews call this too, so the screen equals the invoice.
+ * and a tax-exempt sale taxes nothing. No discount at the counter. The /pos
+ * cart preview calls this too, so the screen equals the invoice.
  */
 export function priceCounterSale(lines: CounterLineInput[], taxRatePct: number,
   opts: { taxExempt?: boolean; defaultTaxable?: boolean } = {}): PricedInvoice {

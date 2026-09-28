@@ -176,7 +176,7 @@ export async function paymentRoutes(app: FastifyInstance) {
   // Date-range summary: daily/weekly/monthly/custom reports come from here.
   app.get('/api/reports/summary', async (req) => {
     const { from, to } = req.query as { from?: string; to?: string };
-    // Range filter in SQL; yyyy-mm-dd = the shop's local day (Quick Order's "today" total and Reports call this on load).
+    // Range filter in SQL; yyyy-mm-dd = the shop's local day (POS's "Today" card and Reports call this on load).
     const rows = await db.select({ kind: payments.kind, method: payments.method, amountCents: payments.amountCents })
       .from(payments).where(and(isNull(payments.voidedAt), ...dateRangeConds(payments.createdAt, from, to)));
     const byMethod: Record<string, number> = {};

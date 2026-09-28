@@ -98,7 +98,7 @@ describe('customer creation email rule', () => {
     expect(res.statusCode).toBe(201);
   });
 
-  it('exempts the generic Walk-in record (Quick Order path)', async () => {
+  it('exempts a customer named Walk-in from the email requirement', async () => {
     const res = await inject({ method: 'POST', url: '/api/customers',
       payload: { name: 'Walk-in', notes: 'Generic walk-in counter customer' } });
     expect(res.statusCode).toBe(201);
@@ -558,7 +558,7 @@ describe('needs-ordering view and valuation', () => {
   });
 });
 
-describe('counter-sale deduction (Quick Order → inventory)', () => {
+describe('counter-sale deduction (POS → inventory)', () => {
   it('deducts on sale, is idempotent on retry, and books reason "sold"', async () => {
     const item = await makeItem({ count: 5 });
     const clientRef = ref();

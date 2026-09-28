@@ -249,3 +249,12 @@ local day on every filter — `/api/reports/summary`, `/api/reports/payments.csv
 midnight, end exclusive; the server runs with `TZ`, America/Chicago in the
 Dockerfile). Before, a date was a UTC day, so an evening sale landed on the
 next day's report. A full timestamp is still used as given.
+
+## Owner decision 2026-09-28 (D15) — Quick Order retired into POS
+
+`/quick` was a duplicate, narrower counter-sale screen; `/pos` already covered
+everything it did (multi-line cart, per-line tax, tax exempt, cash drawer,
+receipts) plus more. The owner decided to retire it: `/quick` now redirects to
+`/pos`, the "Today" card moved onto `/pos`, and `src/modules/jobs/quick/` is
+deleted. `POST /api/pos/sale` is unchanged — it never distinguished which
+screen called it. See `devlog.md`'s 2026-09-28 entry for the full comparison.

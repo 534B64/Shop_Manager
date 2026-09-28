@@ -24,8 +24,8 @@ export const createBody = {
     newCustomer: {
       type: 'object',
       // Email is required for every new customer entered by a person
-      // (2026-07-02). The generic Walk-in record is created via
-      // POST /api/customers, which carries the exemption.
+      // (2026-07-02). A customer created via POST /api/customers named
+      // "Walk-in" carries the exemption.
       required: ['name', 'email'],
       additionalProperties: false,
       properties: {

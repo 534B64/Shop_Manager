@@ -139,8 +139,8 @@ tab-flow keep a multi-item quote on one screen.
 - Borrow **Direction A's restraint and large, confident total** — keep B dense
   but give the grand total real visual weight.
 - Reserve **Direction C's warmth** (rounded, friendly, avatar, softer color) for
-  *counter-facing* surfaces — Quick Order and the customer-facing printout —
-  not the power-user quote screen.
+  *counter-facing* surfaces — POS and the customer-facing printout — not the
+  power-user quote screen.
 
 *Shipped (2026-06-16):* Inventory filtering to speed stock checks — a search box
 (name/color/vendor) plus filters for kind (rolls vs. other stock), material,
@@ -154,8 +154,8 @@ part):
 - Tokens already exist (CSS variables + light/dark/minimal themes) — build on
   them, don't replace them.
 - Standardize: buttons, inputs/selects, tables, cards, spacing scale, and the
-  accent color. Then apply across Dashboard, Quotes, Orders, Quick Order,
-  Payments, Customers, Inventory, Materials, Settings.
+  accent color. Then apply across Dashboard, Quotes, Orders, POS, Payments,
+  Customers, Inventory, Materials, Settings.
 - Keep touch-friendly targets at the counter and keyboard-fast entry for
   quoting — both are existing requirements.
 

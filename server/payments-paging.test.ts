@@ -104,7 +104,7 @@ describe('GET /api/balances paging', () => {
   });
 });
 
-describe('GET /api/reports/summary (Quick Order "today")', () => {
+describe('GET /api/reports/summary (POS "today")', () => {
   it('filters by date or timestamp in SQL and counts payments apart from refunds', async () => {
     const all = await get('/api/reports/summary');
     expect(all.body).toMatchObject({ count: 4, paymentCount: 4, paymentsCents: 1000 + 500 + 100 + all.body.byMethod.card });

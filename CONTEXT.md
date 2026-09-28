@@ -185,8 +185,10 @@ used in code, docs, or conversation, it means exactly this.
 
 ### Customers & access
 
-- **Walk-in** — the one generic customer record Quick Order uses; the sole
-  exemption from the email-required rule.
+- **Walk-in** — a customer named `Walk-in`; the sole exemption from the
+  email-required rule. Counter sales on `/pos` don't require picking a
+  customer at all, so this name is only for a shop that wants a named record
+  for anonymous foot traffic.
 - **Level** — manager-assigned customer tier 0–3; levels 1+ get a discount %.
 - **Role** — what an account may do: **cashier** (quotes, orders, payments,
   receiving, counts), **manager** (also approves money/override actions and

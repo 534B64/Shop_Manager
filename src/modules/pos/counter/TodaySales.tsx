@@ -1,10 +1,11 @@
 // Today's counter sales: the total from the SQL summary (every payment on the
 // shop's local day — the server reads a plain date as a local day), the list
-// from the newest 12.
+// from the newest 12. Moved from the retired Quick Order screen (owner
+// decision D15) — /pos is now the only counter-sale screen.
 import { EmptyState, LinearProgress, List, ListItem, Card, CardHeader } from '../../../components/m3';
 import { useQuery, withParams, type Page } from '../../../lib/query';
 import { formatCents } from '../../../lib/format';
-import { localIsoDate } from '../shared/jobLogic';
+import { localIsoDate } from '../../jobs/shared/jobLogic';
 
 export interface PaymentRow { id: number; amountCents: number; method: string; kind: string; voidedAt: string | null; createdAt: string; jobTitle: string | null }
 interface Summary { paymentCount: number; paymentsCents: number }

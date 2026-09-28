@@ -80,8 +80,9 @@ export async function customerRoutes(app: FastifyInstance) {
     },
   }, async (req, reply) => {
     const body = req.body as { name: string; email?: string };
-    // Email is required for new customers (2026-07-02). Sole exemption: the
-    // generic "Walk-in" counter record Quick Order auto-creates.
+    // Email is required for new customers (2026-07-02). Sole exemption: a
+    // customer named "Walk-in" — POS counter sales don't require a customer
+    // at all (D15), but an existing/legacy Walk-in record stays exempt.
     if (!emailOk(body.name, body.email)) {
       return reply.code(400).send({ error: 'An email address is required for new customers.' });
     }

@@ -131,7 +131,7 @@ See `ROADMAP.md` §B.
 - [x] Design-system **foundation**: shared primitives in `src/lib/ui.ts` (button/input/card/chip/label class tokens + `copyToClipboard`) on the existing CSS-variable themes
 - [x] Inventory filtering (speeds stock checks): search box (name/color/vendor) + filters for kind (rolls / other), material, color, size, and low-only; live "X of Y" count + Clear; roll SKUs tagged in the list
 - [ ] Adopt direction B (dense + keyboard-fast quoting) with A's large, confident total — **deferred**: needs a live preview to iterate; migrate pages onto `src/lib/ui.ts` incrementally
-- [ ] Reserve warm/rounded treatment (direction C) for counter-facing surfaces (Quick Order, customer printout) — deferred with the reskin
+- [ ] Reserve warm/rounded treatment (direction C) for counter-facing surfaces (POS, customer printout) — deferred with the reskin
 
 ## Phase 10 — Inventory corrections
 Driven by Josiah's real pain: organizing + finding inventory fast.

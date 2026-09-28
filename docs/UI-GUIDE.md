@@ -94,10 +94,10 @@ Offset-paged — `{ rows, total, limit, offset }`:
 |---|---|---|
 | `/api/inventory` | `q` + `match=contains\|starts\|ends\|exact` (name/color/vendor), `ids=1,2,…` (≤ 200), `kind=roll\|other`, `materialId`, `color`, `widthIn`, `categoryId` (or `none`), `supplierId`, `low=1`, `stock=low\|out\|ok`; `sort=name\|count\|threshold\|created\|value\|size\|color\|low`, `dir`; `group=material\|color\|size\|unit\|category` orders by the group first and adds `groupKey`/`groupLabel` per row + `groups: [{key,label,count,low}]` (no key = "Other / Consumables", last) | `/inventory` (default `group=material`), counts, pickers |
 | `/api/inventory/reorder`, `/api/inventory/usage` | the item filters; reorder = most urgent first, usage = fastest first | `/inventory/reorder` |
-| `/api/customers` | `q` (name / email / phone digits), `includeArchived=1`, `sort=recent\|name\|created`, `dir` | `/customers`, the customer pickers (`?q=…&limit=10&offset=0`), Quick Order's Walk-in lookup |
+| `/api/customers` | `q` (name / email / phone digits), `includeArchived=1`, `sort=recent\|name\|created`, `dir` | `/customers`, the customer pickers (`?q=…&limit=10&offset=0`) |
 | `/api/jobs` | `q`, `status` (one or a comma list); newest first. **Quirk:** paged only when `offset` is sent — `?limit=` alone keeps the old bare array (usePaged always sends `offset`, so pages are fine) | Orders list, Quotes "recent jobs" |
 | `/api/balances` | `q`; largest balance first; also `totalOwedCents` | Payments "Owed", Dashboard owed card |
-| `/api/payments` | `q` (job title / customer); newest first | Payments, Quick Order "Today" (`?limit=12&offset=0`) |
+| `/api/payments` | `q` (job title / customer); newest first | Payments, POS "Today" card (`?limit=12&offset=0`) |
 | `/api/cycle-counts` | history, newest first (default 25) | `/inventory/counts` |
 
 Keyset-paged, newest first — `?limit=&before=<id>` → `{ rows, nextBefore }` (no total; show "Page N"):
@@ -127,8 +127,8 @@ Single-call summaries (added up in SQL, never walked in the browser): `/api/dash
 | `components/ConfirmDialog.tsx` | yes/no dialog (never `window.confirm/prompt/alert`); shows the error inline, ignores a cancelled approval |
 | `components/DateRangeFields.tsx` | From/To date pair (`DateRange`), used by Reports, invoices, returns, audit |
 | `lib/errorText.ts` | `errorText(e, fallback)` (the one error-to-words function), `approvalCancelled`, `isDrawerClosed`, `lockedInvoice`, `isNetworkError` |
-| `modules/pos/lib/TaxExemptField.tsx` | the sale-level Tax exempt switch + reason (reason chips, free text); `/pos` and `/quick`. Pair it with `cartTotals`/`quickTotals` (both `priceCounterSale`) so the preview equals the invoice |
-| drawer prompt | every tender needs an open drawer (409 `drawer_closed`, `isDrawerClosed`): show `OpenDrawerForm compact` inline — counter, Quick Order, Record payment, Refund — don't send people to another page |
+| `modules/pos/lib/TaxExemptField.tsx` | the sale-level Tax exempt switch + reason (reason chips, free text); `/pos` only, the one counter-sale screen. Pair it with `cartTotals` (`priceCounterSale`) so the preview equals the invoice |
+| drawer prompt | every tender needs an open drawer (409 `drawer_closed`, `isDrawerClosed`): show `OpenDrawerForm compact` inline — counter, Record payment, Refund — don't send people to another page |
 | `lib/ref.ts` | `newRef()` for every `clientRef` / client id — `crypto.randomUUID` does not exist on the shop's plain-http LAN origin, so it falls back to `getRandomValues` |
 | `DataTable` `groupOf` / `renderGroup` / `hideRow` | header rows where the group key changes (inventory group-by) |
 
@@ -149,8 +149,7 @@ All routes live in `src/routes.tsx`. To add a page:
 | `/` | Dashboard (`pages/dashboard/`) | |
 | `/quotes` → `/quotes/new`, `/quotes/:id` | quote / order editor (`modules/jobs/quote/`) | |
 | `/orders` | board + list (`modules/jobs/orders/`) | |
-| `/quick` | Quick Order (`modules/jobs/quick/`) | |
-| `/pos` | counter sale (`modules/pos/counter/`); `/pos/counter` redirects here | |
+| `/pos` | counter sale (`modules/pos/counter/`); `/pos/counter` and `/quick` redirect here (Quick Order retired into it, D15) | |
 | `/pos/drawer`, `/pos/drawer/:id` | cash drawer + Z-report (`modules/pos/drawer/`) | close = manager (server) |
 | `/pos/invoices`, `/pos/invoices/:number` | invoices + detail/void (`modules/pos/invoices/`) | void = approval |
 | `/pos/returns`, `/pos/returns/new`, `/pos/returns/:id` | returns (`modules/pos/returns/`) | refund over threshold = approval |

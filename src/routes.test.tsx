@@ -19,6 +19,14 @@ describe('route table', () => {
     expect(NAV.find((n) => n.label === 'POS')?.to).toBe('/pos');
     expect(NAV.find((n) => n.label === 'Payments')?.to).toBe('/payments');
   });
+
+  it('Quick Order is retired: /quick redirects to /pos and the nav drops it (D15)', () => {
+    const el = route('/quick')!.element as { type: unknown; props: { to: string } };
+    expect(el.type).toBe(Navigate);
+    expect(el.props.to).toBe('/pos');
+    expect(NAV.find((n) => n.label === 'Quick Order')).toBeUndefined();
+    expect(NAV.some((n) => n.to === '/quick')).toBe(false);
+  });
 });
 
 describe('admin routes', () => {

@@ -19,10 +19,12 @@ import { useSaleDraft, newDraft } from './useSaleDraft';
 import { digitsToCents } from './keypad';
 import * as C from './cart';
 import { errorText, isDrawerClosed, isNetworkError } from '../../../lib/errorText';
+import TodaySales, { useTodaySales } from './TodaySales';
 
 export default function CounterPage() {
   const drawerQ = useQuery<{ drawer: DrawerView | null }>('/api/drawer/current');
   const taxQ = useQuery<{ ratePct: number }>('/api/settings/tax');
+  const today = useTodaySales();
   const [draft, setDraft] = useSaleDraft();
   const [lastAdded, setLastAdded] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -60,6 +62,7 @@ export default function CounterPage() {
       setReceipt(res);
       setDraft(newDraft());
       drawerQ.reload();
+      today.reload();
     } catch (e) {
       if (isDrawerClosed(e)) { drawerQ.reload(); setError('The drawer is closed — every sale needs it open. Open it below (count the float), then complete the sale.'); }
       else if (isNetworkError(e)) setError('No answer from the server — check the wifi and tap Complete Sale again. It won’t charge twice.');
@@ -132,6 +135,7 @@ export default function CounterPage() {
           {blocked && !busy && <p className="text-body-medium text-on-surface-variant -mt-2 text-center">{blocked}</p>}
         </Card>
       </div>
+      <div className="mt-6 max-w-2xl"><TodaySales q={today} /></div>
     </div>
   );
 }

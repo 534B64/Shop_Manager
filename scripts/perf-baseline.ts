@@ -43,13 +43,13 @@ const PROBES: Probe[] = [
   { page: 'Orders (board, search)', url: '/api/jobs/board?limit=20&q=decal' },
   { page: 'Orders (list)', url: '/api/jobs?limit=25&offset=0' },
   { page: 'Orders (list, no hit)', url: '/api/jobs?limit=25&offset=0&q=zzzz-nohit', note: 'worst case: scans every job' },
-  { page: 'Quick Order', url: `/api/reports/summary?from=${today}&to=${today}`, note: 'today total (local day), SQL range' },
-  { page: 'Quick Order', url: '/api/payments?limit=12&offset=0' },
-  { page: 'Quick Order', url: '/api/customers?q=Walk-in&limit=10&offset=0' },
-  { page: 'Quick Order / POS', url: '/api/inventory?limit=8&offset=0&q=red', note: 'stock picker' },
-  // POS
+  // POS (Quick Order was retired into it, D15 — its probes moved here: today's
+  // total + latest payments for the "Today" card, and the stock picker)
   { page: 'POS /pos', url: '/api/drawer/current' },
   { page: 'POS /pos', url: '/api/customers?q=smi&limit=10&offset=0', note: 'customer picker' },
+  { page: 'POS /pos', url: `/api/reports/summary?from=${today}&to=${today}`, note: 'Today card total (local day), SQL range' },
+  { page: 'POS /pos', url: '/api/payments?limit=12&offset=0', note: 'Today card latest payments' },
+  { page: 'POS /pos', url: '/api/inventory?limit=8&offset=0&q=red', note: 'stock picker' },
   { page: 'POS /pos/invoices', url: '/api/invoices?limit=25', note: 'keyset' },
   { page: 'POS /pos/invoices (range)', url: `/api/invoices?limit=25&from=${monthStart}&to=${today}` },
   { page: 'POS /pos/invoices/:n', url: '/api/invoices/000100', note: 'lines + void + returns + payments' },

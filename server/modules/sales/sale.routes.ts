@@ -1,4 +1,4 @@
-// POST /api/pos/sale — the counter sale (Quick Order and /pos), ADR 0007.
+// POST /api/pos/sale — the counter sale (/pos; Quick Order was retired into it, D15), ADR 0007.
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
 import { withTx } from '../../db/index.js';
@@ -37,7 +37,7 @@ interface SaleBody {
 }
 
 export async function saleRoutes(app: FastifyInstance) {
-  // ---------------- Counter sale (Quick Order) ----------------
+  // ---------------- Counter sale (/pos) ----------------
   // Job + invoice + stock deduction + payment + audit rows: one transaction.
   // Legacy body {title, amountCents, inventoryItemId?, stockQty?} is one line;
   // `lines` itemizes. Tax (owner decision D10): every line is taxed unless it

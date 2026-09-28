@@ -10,7 +10,6 @@ import type { NavItem } from './components/m3';
 const Dashboard = lazy(() => import('./pages/dashboard/Dashboard'));
 const QuotePage = lazy(() => import('./modules/jobs/quote/QuotePage'));
 const OrdersPage = lazy(() => import('./modules/jobs/orders/OrdersPage'));
-const QuickOrderPage = lazy(() => import('./modules/jobs/quick/QuickOrderPage'));
 const Payments = lazy(() => import('./modules/payments/PaymentsPage'));
 const PosCounter = lazy(() => import('./modules/pos/counter/CounterPage'));
 const PosDrawer = lazy(() => import('./modules/pos/drawer/DrawerPage'));
@@ -45,7 +44,6 @@ export const NAV: (NavItem & { min?: Role })[] = [
   { to: '/', label: 'Dashboard', icon: 'dashboard', end: true },
   { to: '/quotes', label: 'Quotes', icon: 'quote' },
   { to: '/orders', label: 'Orders', icon: 'orders' },
-  { to: '/quick', label: 'Quick Order', icon: 'bolt' },
   { to: '/pos', label: 'POS', icon: 'cart' },
   { to: '/payments', label: 'Payments', icon: 'payments' },
   { to: '/customers', label: 'Customers', icon: 'people' },
@@ -88,7 +86,7 @@ const DEFS: Def[] = [
   { path: '/quotes/new', element: <QuotePage /> },
   { path: '/quotes/:id', element: <QuotePage /> },
   { path: '/orders', element: <OrdersPage /> },
-  { path: '/quick', element: <QuickOrderPage /> },
+  { path: '/quick', element: <Navigate to="/pos" replace /> },
 
   { path: '/customers', element: <CustomerList /> },
   { path: '/customers/:id', element: <CustomerDetail /> },
