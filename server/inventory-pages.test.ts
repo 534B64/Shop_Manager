@@ -84,7 +84,9 @@ describe('GET /api/inventory/transactions', () => {
     expect(red.body.nextBefore).toBe(red.body.rows[1].id);
     const rest = await req(manager, 'GET', `/api/inventory/transactions?itemId=${ids['Red tape']}&limit=2&before=${red.body.nextBefore}`);
     expect(rest.body.rows.map((r: { txnType: string }) => r.txnType)).toEqual(['receipt', 'opening']);
-    const today = new Date().toISOString().slice(0, 10);
+    // The shop's local day (date filters are local days) — a UTC date broke this after ~7 pm Central.
+    const now = new Date();
+    const today = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
     expect((await req(manager, 'GET', `/api/inventory/transactions?from=${today}&to=${today}`)).body.rows.length).toBe(all.body.rows.length);
     expect((await req(manager, 'GET', '/api/inventory/transactions?to=2000-01-01')).body.rows).toEqual([]);
   });
