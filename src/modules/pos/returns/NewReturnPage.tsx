@@ -5,7 +5,7 @@ import { Button, Card, CardHeader, EmptyState, LinearProgress, TextField } from 
 import { post } from '../../../lib/api';
 import { useQuery } from '../../../lib/query';
 import { formatCents } from '../../../lib/format';
-import { parseInvoiceNumber, returnLineRefund } from '../../../../shared/invoice';
+import { parseInvoiceNumber, returnLineRefund, refundApprovalHint } from '../../../../shared/invoice';
 import PosHeader from '../PosHeader';
 import { newRef } from '../../../lib/ref';
 import PaymentMethods from '../counter/PaymentMethods';
@@ -24,6 +24,7 @@ export default function NewReturnPage() {
   const valid = parseInvoiceNumber(number) != null;
   const q = useQuery<InvoiceDetail>(valid ? `/api/invoices/${number}` : null);
   const pos = useQuery<{ refundApprovalThresholdCents: number }>('/api/settings/pos');
+  const refunded = useQuery<{ refundedCents: number }>(q.data ? `/api/payments/refunded?jobId=${q.data.jobId}` : null).data?.refundedCents;
   const [picks, setPicks] = useState<Record<number, ReturnPick>>({});
   const [reason, setReason] = useState('');
   const [method, setMethod] = useState('');
@@ -36,6 +37,8 @@ export default function NewReturnPage() {
   const pickOf = (id: number, restockDefault: boolean) => picks[id] ?? { qty: 0, restock: restockDefault };
   const preview = inv ? previewReturn(inv, picks) : null;
   const threshold = pos.data?.refundApprovalThresholdCents;
+  const hint = threshold != null && refunded != null && preview && preview.totalCents > 0
+    ? refundApprovalHint(refunded, preview.totalCents, threshold, 'return') : null;
   const needsMethod = !!preview && preview.refundCents > 0;
   const blocked = !preview || preview.lines.length === 0 ? 'Pick at least one item coming back.'
     : preview.invalid ? 'A quantity is more than what’s left to return.'
@@ -98,9 +101,8 @@ export default function NewReturnPage() {
                 {preview.totalCents > 0 && preview.refundCents === 0 && (
                   <p className="text-body-medium text-on-surface-variant">Nothing to hand back — the customer hadn’t paid past what they’ll owe. The return lowers their balance.</p>)}
                 {needsMethod && <PaymentMethods value={method} onChange={setMethod} methods={REFUND_METHODS} labels={METHOD_LABELS} />}
-                {threshold != null && preview.totalCents > threshold && (
-                  <p className="rounded-shape-small bg-warning-container text-on-warning-container px-3 py-2 text-body-medium">
-                    Over {formatCents(threshold)} — a manager approves this return when you save it.</p>)}
+                {hint && (
+                  <p className="rounded-shape-small bg-warning-container text-on-warning-container px-3 py-2 text-body-medium">{hint}</p>)}
                 {error && <p role="alert" className="rounded-shape-small bg-error-container text-on-error-container px-3 py-2 text-body-large">{error}</p>}
                 <Button touch className="!h-16 !text-title-large" disabled={busy || !!blocked} onClick={submit}>{busy ? 'Saving…' : 'Save return'}</Button>
                 {blocked && !busy && <p className="text-body-medium text-on-surface-variant text-center -mt-2">{blocked}</p>}

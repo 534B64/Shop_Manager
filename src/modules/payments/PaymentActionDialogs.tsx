@@ -1,4 +1,4 @@
-// Refund and Void on a recorded payment. A refund over the Settings threshold
+// Refund and Void on a recorded payment. A refund that takes the order past the Settings threshold (per order, D14)
 // and every void need a manager (the shared approval dialog opens
 // automatically, D13); a refund needs the drawer open (D12). The server's
 // refusals are shown as-is.
@@ -12,6 +12,7 @@ import { newRef } from '../../lib/ref';
 import PaymentMethods from '../pos/counter/PaymentMethods';
 import { METHOD_LABELS, methodLabel, type PaymentRow } from '../pos/types';
 import { PAYMENT_METHODS } from './logic';
+import { refundApprovalHint } from '../../../shared/invoice';
 import { errorText, isDrawerClosed } from '../../lib/errorText';
 
 const drawerMsg = 'The drawer is closed — refunds need it open. Open it below, then record the refund again.';
@@ -25,9 +26,11 @@ export function RefundDialog({ p, onClose, onDone }: { p: PaymentRow; onClose: (
   const [error, setError] = useState<string | null>(null);
   const [drawerClosed, setDrawerClosed] = useState(false);
   const threshold = useQuery<{ refundApprovalThresholdCents: number }>('/api/settings/pos').data?.refundApprovalThresholdCents;
+  const refunded = useQuery<{ refundedCents: number }>(`/api/payments/refunded?jobId=${p.jobId}`).data?.refundedCents;
   const cents = parseDollarsToCents(amount);
   const bad = cents == null || cents <= 0;
-  const needsManager = threshold != null && cents != null && cents > threshold;
+  const hint = threshold != null && refunded != null && cents != null && cents > 0
+    ? refundApprovalHint(refunded, cents, threshold) : null;
 
   async function save() {
     if (bad || busy) return;
@@ -41,7 +44,7 @@ export function RefundDialog({ p, onClose, onDone }: { p: PaymentRow; onClose: (
 
   return (
     <Dialog open onClose={() => !busy && onClose()} dismissOnScrim={false} title="Refund" className="max-w-lg"
-      description={`${p.jobTitle ?? 'Job'} · ${p.customerName ?? '—'} · paid ${formatCents(p.amountCents)} by ${methodLabel(p.method)}.${threshold != null ? ` Over ${formatCents(threshold)} a manager approves.` : ''}`}
+      description={`${p.jobTitle ?? 'Job'} · ${p.customerName ?? '—'} · paid ${formatCents(p.amountCents)} by ${methodLabel(p.method)}.${threshold != null ? ` A manager approves once an order's refunds pass ${formatCents(threshold)}.` : ''}`}
       actions={<>
         <Button variant="text" touch onClick={onClose} disabled={busy}>Cancel</Button>
         <Button touch onClick={save} disabled={busy || bad}>{busy ? 'Saving…' : 'Record refund'}</Button>
@@ -51,7 +54,7 @@ export function RefundDialog({ p, onClose, onDone }: { p: PaymentRow; onClose: (
           error={amount.trim() && bad ? 'Enter an amount above $0.00' : null} />
         <PaymentMethods value={method} onChange={setMethod} methods={PAYMENT_METHODS} labels={METHOD_LABELS} />
         <TextField label="Reason (optional)" value={note} maxLength={500} onChange={(e) => setNote(e.target.value)} />
-        {needsManager && <p className="text-body-medium text-on-surface-variant">Over {formatCents(threshold!)} — a manager approves this refund.</p>}
+        {hint && <p className="text-body-medium text-on-surface-variant">{hint}</p>}
         {error && <p role="alert" className="text-body-medium text-error">{error}</p>}
       </form>
       {drawerClosed && <div className="mt-3 rounded-shape-small border border-outline-variant p-3"><OpenDrawerForm compact onOpened={() => { setDrawerClosed(false); setError(null); }} /></div>}

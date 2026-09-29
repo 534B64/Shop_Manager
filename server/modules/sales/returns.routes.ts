@@ -7,7 +7,7 @@ import { audit } from '../audit/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
 import { posSettings } from '../settings/index.js';
 import { recordReturn } from '../inventory/index.js';
-import { recordPayment, paidNetCents, returnedCents, openDrawer, requireOpenDrawer } from '../payments/index.js';
+import { recordPayment, paidNetCents, refundedCents, returnedCents, openDrawer, requireOpenDrawer } from '../payments/index.js';
 import { SalesError } from './service.js';
 import { refusable, pageLimit } from './http.js';
 import { dateRangeConds } from '../../lib/dates.js';
@@ -69,12 +69,14 @@ export async function returnRoutes(app: FastifyInstance) {
       // Money handed back needs the open drawer (D12) — before asking a manager.
       if (refundCents > 0) await requireOpenDrawer(tx);
 
-      // Over the Settings threshold → manager approval; at or under → cashier alone.
+      // The order's refunds so far + this return's value over the Settings
+      // threshold -> manager approval; at or under -> cashier alone (D14).
       const { refundApprovalThresholdCents } = await posSettings(tx);
+      const priorTotalCents = await refundedCents(inv.jobId, tx);
       let approvalId: number | null = null;
-      if (totalCents > refundApprovalThresholdCents) {
+      if (priorTotalCents + totalCents > refundApprovalThresholdCents) {
         const approver = await requireApproval(req, reply, { action: 'return.refund', entity: 'invoice', entityId: inv.id,
-          reason: body.reason, details: { number: inv.number, totalCents, refundCents, thresholdCents: refundApprovalThresholdCents } });
+          reason: body.reason, details: { number: inv.number, totalCents, refundCents, priorTotalCents, thresholdCents: refundApprovalThresholdCents } });
         if (!approver) return reply;
         approvalId = approver.approvalId;
       }

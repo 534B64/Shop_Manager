@@ -4,6 +4,6 @@
 // payment rows (Phase 3, ADR 0007) — the drawer rule (D12) lives there.
 export { paymentRoutes, PAYMENT_METHODS } from './routes.js';
 export {
-  creditBalanceCents, paidNetCents, livePaymentCount, returnedCents, owedCents,
+  creditBalanceCents, paidNetCents, refundedCents, livePaymentCount, returnedCents, owedCents,
   openDrawer, requireOpenDrawer, recordPayment, PaymentError, NO_DRAWER_MESSAGE, type RecordPaymentInput,
 } from './service.js';

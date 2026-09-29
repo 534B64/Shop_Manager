@@ -36,6 +36,17 @@ export async function paidNetCents(jobId: number, dbx: Db = db): Promise<number>
   return row.net;
 }
 
+/** Refunded so far on a job: live refund rows only (bare refunds, return and
+ *  invoice-void refunds; voided ones excluded). The refund-approval limit
+ *  counts this per order (D14). */
+export async function refundedCents(jobId: number, dbx: Db = db): Promise<number> {
+  const [row] = await dbx
+    .select({ total: sql<number>`coalesce(sum(${payments.amountCents}), 0)` })
+    .from(payments)
+    .where(and(eq(payments.jobId, jobId), eq(payments.kind, 'refund'), isNull(payments.voidedAt)));
+  return row.total;
+}
+
 /** Live (non-voided) payment/refund row count for a job. Used by the
  *  jobs module's removal rule: any live money row blocks a soft delete. */
 export async function livePaymentCount(jobId: number, dbx: Db = db): Promise<number> {

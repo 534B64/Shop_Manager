@@ -129,8 +129,9 @@ used in code, docs, or conversation, it means exactly this.
   given are recorded too. Money rows are never erased.
 - **Refund** — money handed back to a customer, in the same ledger as
   payments. A refund made because of a void or a return points at it. A
-  refund over the shop's refund threshold needs a manager — one threshold for
-  a plain refund and for a return.
+  refund needs a manager once the order's refunds add up past the shop's
+  refund threshold — one threshold, counted per order, for a plain refund and
+  for a return.
 - **Invoice** — the locked record of a sale: what was sold, at what price,
   with what tax and discount, to whom. Made when a Job is paid in full or
   picked up, or at once for a counter sale. Once a Job has an invoice, its
@@ -163,7 +164,7 @@ used in code, docs, or conversation, it means exactly this.
   returned line is marked **restock** (back on the shelf) or not (damaged).
   Its value includes that line's share of tax and discount. The customer gets
   back only what they had overpaid once the return lowers what they owe;
-  returns worth more than the shop's threshold need a manager.
+  a return that takes the order's refunds past the shop's threshold needs a manager.
 - **Price override** — saving a price different from the estimator's
   suggestion. Always allowed (the estimator is advisory), but a manager
   approves it and it is logged.

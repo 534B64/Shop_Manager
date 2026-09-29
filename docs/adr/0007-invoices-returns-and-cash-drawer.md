@@ -241,6 +241,18 @@ Four follow-ups the owner decided after the Phase 3 build. As implemented:
   paid) stays. Voids always need a manager: invoice void (`invoice.void`) and
   payment void (`payment.void`), whatever the amount.
 
+**D14 (2026-09-29): per order.** The D13 threshold now counts **per order**,
+not per refund: a bare refund (`POST /api/payments`) or a return needs a manager
+when **the job's live refunds so far + this refund (a return: its value incl.
+tax)** exceed `refundApprovalThresholdCents`. Before, a cashier could split a
+$100 refund into two $50 refunds with no manager. "Refunds so far" is
+`refundedCents(jobId)` in payments (live, non-voided refund rows, including
+those made by returns and invoice voids; a voided refund stops counting). The
+approval details carry `priorTotalCents` and `thresholdCents`. Voids still
+always need a manager and the refund cap (never more than paid) is unchanged.
+`GET /api/payments/refunded?jobId=` feeds the Refund dialog and new-return
+hints.
+
 **Date ranges (same pass).** A date-only `from`/`to` now means the shop's
 local day on every filter — `/api/reports/summary`, `/api/reports/payments.csv`,
 `/api/reports/sales`, `/api/invoices`, `/api/returns`, `/api/audit`,

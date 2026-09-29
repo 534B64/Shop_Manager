@@ -261,3 +261,22 @@ export function buildZReport(input: ZReportInput): ZReport {
       overShortCents: input.countedChecksCents != null ? overShortCents(checkNet, input.countedChecksCents) : null },
   };
 }
+
+/** Refund approval limit, counted per order (D14): true when the order's
+ *  refunds so far plus this refund/return are over the Settings threshold. */
+export function refundNeedsManager(priorRefundedCents: number, amountCents: number, thresholdCents: number): boolean {
+  return priorRefundedCents + amountCents > thresholdCents;
+}
+
+const dollars = (c: number) => `$${(c / 100).toFixed(2)}`;
+
+/** Plain-words hint for the refund dialog and the return page; null when no manager is needed. */
+export function refundApprovalHint(
+  priorRefundedCents: number, amountCents: number, thresholdCents: number, what: 'refund' | 'return' = 'refund',
+): string | null {
+  if (!refundNeedsManager(priorRefundedCents, amountCents, thresholdCents)) return null;
+  if (priorRefundedCents > 0) {
+    return `This order has ${dollars(priorRefundedCents)} refunded already — ${what === 'return' ? 'this return' : `refunding ${dollars(amountCents)} more`} needs a manager (over ${dollars(thresholdCents)} per order).`;
+  }
+  return `Over ${dollars(thresholdCents)} — a manager approves this ${what}.`;
+}
