@@ -3,6 +3,7 @@
 import SettingsFrame from '../SettingsFrame';
 import SettingsCard from './SettingsCard';
 import DataCard from './DataCard';
+import AddressCard from './AddressCard';
 
 const num = (v: unknown) => (typeof v === 'number' ? v : Number(v) || 0);
 
@@ -32,6 +33,7 @@ export default function Shop() {
             { key: 'reorderBufferDays', label: 'Reorder buffer', suffix: 'days', min: 0, max: 60 },
           ]}
           pick={(d) => ({ pctThreshold: num(d.pctThreshold), unitThreshold: num(d.unitThreshold), reorderBufferDays: num(d.reorderBufferDays) })} />
+        <AddressCard />
         <DataCard />
       </div>
     </SettingsFrame>

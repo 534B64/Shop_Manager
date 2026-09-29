@@ -32,6 +32,7 @@ The v1 win condition: **anyone in the shop can quote a job consistently.** When 
 ## Architecture
 
 - **Self-hosted LAN web app.** Server runs on the shop NAS/local PC (wired); clients are browsers on multiple shop PCs over sketchy wifi.
+- **Windows PC install (2026-09-29 — ADR 0010).** Production serves on **port 80** (env `PORT` overrides; falls back to 3000 if 80 is busy/refused), and `server/lib/mdns.ts` (no deps, UDP 5353) answers `<hostname>.local` with the LAN IPs so staff open `http://<shopname>.local`. The hostname is env `SHOP_HOSTNAME` or `data/shop.env` (written by Setup); mDNS starts only in production with a hostname. `/api/health` includes `addresses`. `Setup.bat` / `Update.bat` (`setup/*.ps1`) install/update for non-programmers; Node lives in `runtime/node` (portable, checksum-verified, no admin) and every launcher prefers it over the system Node. The Docker image sets `PORT=3000`. Launchers, firewall and env details: `DEPLOY.md`.
 - **Stack**: TypeScript end to end. React + Vite + Tailwind frontend; Fastify (Node) API; **SQLite** via Drizzle ORM. Single Docker container for deployment.
 - **Why SQLite**: one small team on a LAN; the DB is a single file that rides the existing NAS → cloud backup pipeline for free. Do not introduce Postgres/MySQL without an explicit decision.
 - **Sketchy-wifi rules**: keep payloads small; autosave form drafts client-side; idempotent mutations with retry; no features that break if a request drops mid-flight.

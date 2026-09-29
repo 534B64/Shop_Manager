@@ -1,6 +1,7 @@
 @echo off
 title Shop Manager - Dev Server
 cd /d "%~dp0.."
+call "%~dp0env.bat"
 echo ============================================
 echo  Shop Manager - Starting (development)
 echo  Database: data\demo.db  (DEMO practice data - fill it with 2-Seed-Database.bat)

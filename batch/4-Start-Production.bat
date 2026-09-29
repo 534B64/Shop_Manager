@@ -1,10 +1,11 @@
 @echo off
 title Shop Manager - Production Server
 cd /d "%~dp0.."
+call "%~dp0env.bat"
 echo ============================================
 echo  Shop Manager - Restarting (production): stops any running copy,
 echo  builds the latest, then starts it
-echo  Single server on http://localhost:3000
+echo  Single server: http://YOURSHOPNAME.local  (port 80; falls back to port 3000 if 80 is busy)
 echo  Database: data\dp-erp.db (the REAL shop database)
 echo  Daily backup at 2 AM into data\backups (see docs\BACKUP.md)
 echo  Close this window to stop the app.
@@ -20,7 +21,7 @@ echo Stopping any Shop Manager server that is already running...
 powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0stop-server.ps1"
 if errorlevel 2 (
   echo.
-  echo  Something is still using port 3000, so Shop Manager cannot start.
+  echo  Something is still using the port Shop Manager needs, so it cannot start.
   echo  Run 6-Stop-Hidden.bat, or restart the PC, then try again.
   pause
   exit /b 1
@@ -28,7 +29,7 @@ if errorlevel 2 (
 set NODE_ENV=production
 set DB_PATH=./data/dp-erp.db
 if not defined BACKUP_HOUR set BACKUP_HOUR=2
-rem Opens the browser once the app answers (up to 30 s); says so if it never does.
-start "" powershell -NoProfile -Command "for($i=0;$i -lt 30;$i++){try{Invoke-WebRequest http://localhost:3000/api/health -UseBasicParsing -TimeoutSec 2 | Out-Null; Start-Process http://localhost:3000; exit}catch{Start-Sleep 1}}; Add-Type -AssemblyName PresentationFramework; [void][Windows.MessageBox]::Show('Shop Manager did not start within 30 seconds. Look at the black window for the error message.','Shop Manager')"
+rem Opens the browser once the app answers (up to 45 s; on port 80, or 3000 if 80 was busy); says so if it never does.
+start "" powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0..\setup\open-when-ready.ps1"
 call npm start
 pause

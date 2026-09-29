@@ -26,6 +26,8 @@ ENV BACKUP_HOUR=2
 # Shop time zone (backup hour, local dates). The owner should change this if the
 # shop is not on US Central time; docker-compose.yml sets it too.
 ENV TZ=America/Chicago
+# The Docker image serves on 3000 (the production default elsewhere is port 80).
+ENV PORT=3000
 
 EXPOSE 3000
 CMD ["npx", "tsx", "server/index.ts"]

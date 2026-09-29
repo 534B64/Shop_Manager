@@ -1,6 +1,7 @@
 @echo off
 title Shop Manager - Runtime Test
 cd /d "%~dp0.."
+call "%~dp0env.bat"
 echo ============================================
 echo  Shop Manager - Runtime Test
 echo  Typecheck + tests + live API smoke test

@@ -1,6 +1,7 @@
 @echo off
 title Shop Manager - Install
 cd /d "%~dp0.."
+call "%~dp0env.bat"
 echo ============================================
 echo  Shop Manager - Installing dependencies
 echo ============================================

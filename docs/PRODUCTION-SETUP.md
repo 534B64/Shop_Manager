@@ -85,7 +85,7 @@ The practice files stay in `old-practice-…` until you delete them yourself.
 
 ### The database you already use (made before labels existed) - `9-Mark-Production.bat`
 
-If you have been ringing up real sales for a while, `http://localhost:3000/api/health` shows
+If you have been ringing up real sales for a while, the health page (`/api/health`, on the same address you use for the app) shows
 `"dataset": null` - your real database has no label. That is not broken, but Restore's safety
 rules ("never put practice data over the real shop") only protect a database that is labeled.
 To label it, **once**:
@@ -103,7 +103,7 @@ the database is already labeled, if it is labeled DEMO, or if it has no shop dat
 
 `4-Start-Production.bat` and `5-Start-Hidden.bat` now always mean **restart**: they build the
 latest app, stop any Shop Manager server that is still running (the same way `6-Stop-Hidden.bat`
-does), wait for port 3000 to be free, then start a fresh one. After you copy in an update, just
+does), wait for the port to be free, then start a fresh one. (Easier: unzip the new version over the folder and double-click `Update.bat` - see `DEPLOY.md`.) Otherwise, just
 run `5-Start-Hidden.bat` again. If the build fails, the app that was running is left alone.
 
 If a red strip says **"The server is out of date - run 5-Start-Hidden (restart)"**, the page you

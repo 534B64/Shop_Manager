@@ -1,6 +1,7 @@
 @echo off
 title Shop Manager - Set up the REAL shop database
 cd /d "%~dp0.."
+call "%~dp0env.bat"
 echo ============================================
 echo  Shop Manager - REAL (production) database
 echo ============================================

@@ -1,4 +1,4 @@
-# Stops the Shop Manager server(s) that run from THIS project folder, then waits until port 3000 is free.
+# Stops the Shop Manager server(s) that run from THIS project folder, then waits until the port(s) they used are free.
 # Used by 6-Stop-Hidden.bat, 4-Start-Production.bat and start-hidden.vbs, so "Start" always means
 # "restart": an old server can never keep running behind a newly built app.
 #
@@ -8,12 +8,13 @@
 #   -List      only show what would be stopped
 #   -Pattern   override the "runs the server" match (for testing)
 #   -Root      override the project folder (for testing)
-# Exit code: 0 ok, 2 = something is still using the port afterwards.
+#   -Port      extra port(s) to wait for (the ports the stopped servers were listening on are always waited for)
+# Exit code: 0 ok, 2 = a port the server used is still busy afterwards.
 param(
   [switch]$List,
   [string]$Pattern = 'server[/\\]index\.ts',
   [string]$Root = '',
-  [int]$Port = 3000
+  [int[]]$Port = @()
 )
 
 if (-not $Root) { $Root = Split-Path -Parent $PSScriptRoot }
@@ -41,6 +42,15 @@ do {
   }
 } while ($added)
 
+# The ports these servers are listening on (looked up BEFORE they are stopped).
+$ports = @($Port)
+$myPids = @($mine.Keys)
+if ($myPids.Count -gt 0) {
+  $ports += @(Get-NetTCPConnection -State Listen -ErrorAction SilentlyContinue |
+    Where-Object { $myPids -contains [int]$_.OwningProcess } | ForEach-Object { [int]$_.LocalPort })
+}
+$ports = @($ports | Sort-Object -Unique)
+
 if ($mine.Count -eq 0) { Write-Host 'No Shop Manager server from this folder was running.' }
 foreach ($p in $mine.Values) {
   if ($List) { Write-Host ('Would stop PID ' + $p.ProcessId + ': ' + $p.Name); continue }
@@ -49,15 +59,19 @@ foreach ($p in $mine.Values) {
 }
 if ($List) { exit 0 }
 
-# Give Windows a moment to release the port before the new server starts.
-$free = $false
-for ($i = 0; $i -lt 20; $i++) {
-  $listening = Get-NetTCPConnection -LocalPort $Port -State Listen -ErrorAction SilentlyContinue
-  if (-not $listening) { $free = $true; break }
-  Start-Sleep -Milliseconds 500
+# Give Windows a moment to release the port(s) before the new server starts.
+$busy = $null
+foreach ($pt in $ports) {
+  $listening = $null
+  for ($i = 0; $i -lt 20; $i++) {
+    $listening = Get-NetTCPConnection -LocalPort $pt -State Listen -ErrorAction SilentlyContinue
+    if (-not $listening) { break }
+    Start-Sleep -Milliseconds 500
+  }
+  if ($listening) { $busy = @{ Port = $pt; Pid = ($listening | Select-Object -First 1).OwningProcess } }
+  else { Write-Host ('Port ' + $pt + ' is free.') }
 }
-if ($free) { Write-Host ('Port ' + $Port + ' is free.') }
-else {
-  Write-Host ('WARNING: something is still using port ' + $Port + ' (PID ' + (($listening | Select-Object -First 1).OwningProcess) + '). Close it, then start again.')
+if ($busy) {
+  Write-Host ('WARNING: something is still using port ' + $busy.Port + ' (PID ' + $busy.Pid + '). Close it, then start again.')
   exit 2
 }

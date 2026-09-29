@@ -1,6 +1,7 @@
 @echo off
 title Shop Manager - Load DEMO (practice) data
 cd /d "%~dp0.."
+call "%~dp0env.bat"
 echo ============================================
 echo  Shop Manager - DEMO (practice) database
 echo ============================================

@@ -1,5 +1,5 @@
 import Fastify, { type FastifyInstance } from 'fastify';
-import { runMigrations } from './db/index.js';
+import { runMigrations, DB_PATH } from './db/index.js';
 import { authRoutes, authHook, upgradePlaintextPasswords } from './modules/auth/index.js';
 import { materialRoutes } from './modules/materials/index.js';
 import { customerRoutes } from './modules/customers/index.js';
@@ -12,6 +12,7 @@ import { auditRoutes } from './modules/audit/index.js';
 import { salesRoutes, salesReportRoutes } from './modules/sales/index.js';
 import { rejectBadIds } from './lib/ids.js';
 import { BUILD_INFO } from './lib/build-info.js';
+import { reachableAddresses } from './lib/address.js';
 
 /**
  * Build the API with all routes registered, run migrations, but do NOT listen.
@@ -44,6 +45,8 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
     build: BUILD_INFO.build,
     time: new Date().toISOString(),
     dataset: await getSetting('dataset'),
+    // Where other devices can open the app (shop name + LAN IP), for Settings -> Shop.
+    ...reachableAddresses(DB_PATH),
   }));
 
   await app.register(authRoutes);

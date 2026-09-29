@@ -1,4 +1,22 @@
-# Deploying Decals Plus Shop Manager on your NAS
+# Deploying Decals Plus Shop Manager
+
+Two ways to run it: on **a Windows PC** (the simple way, no Docker; first section) or on **a NAS with Docker** (the rest of this page).
+
+## On a Windows PC (Setup.bat)
+
+Owner-friendly steps are in `README.md`. The technical picture:
+
+- **Install:** unzip the project, double-click `Setup.bat` (`setup/setup.ps1`). It downloads the official Node.js LTS zip (24.x) from nodejs.org into `runtime\node\` (checked against nodejs.org's SHA-256 list; no admin needed; every launcher puts `runtime\node` first on PATH, else uses the PC's Node), runs `npm ci` and `npm run build`, asks for the shop name and a hostname (saved in `data\shop.env` as `SHOP_NAME` / `SHOP_HOSTNAME`), creates the production database with `db:init-prod` only if none exists, adds desktop shortcuts and (optional) a Startup-folder shortcut, and adds the firewall rules (the only elevated step, `setup/firewall.ps1`, after asking). Re-running is safe. `Setup.bat -DryRun` prints the shortcut/startup/firewall changes without making them.
+- **Update:** unzip the new version over the folder, double-click `Update.bat` (`setup/update.ps1`): optional `git pull` (only in a clean git clone), `npm run db:backup` (stops the update if it fails), stop the app, `npm ci`, `npm run build`, start, open. `data\` is never touched except the new backup file.
+- **Address:** the server listens on **port 80** in production (env `PORT` overrides; if 80 is busy or refused it falls back to **3000** and logs which address to use). A small built-in mDNS responder (`server/lib/mdns.ts`, UDP 5353) answers `<hostname>.local` with the PC's current LAN IPv4 addresses. It starts only when a hostname is configured (env `SHOP_HOSTNAME` or `data\shop.env`) and `NODE_ENV=production`. `GET /api/health` lists `addresses` (the `.local` name plus `http://<LAN-IP>` for devices without mDNS, e.g. some Android phones).
+- **Firewall:** node.exe needs inbound TCP 80 (and 3000) and UDP 5353 on Private networks. `setup/firewall.ps1 -NodePath <node.exe>` adds them (`-Remove` deletes them).
+- **Launchers:** `batch\5-Start-Hidden.bat` / `start-hidden.vbs` (`fast` skips the build, `noopen` skips the browser), `4-Start-Production.bat` (visible window), `6-Stop-Hidden.bat` (`stop-server.ps1`, which waits for the ports the old server used). Logs: `data\logs\server-<date>.log`.
+- **Env for testing:** `HOST` (bind address, default `0.0.0.0`), `MDNS_PORT` (any value other than 5353 = loopback-only test mode, no multicast).
+- Why this design: `docs/adr/0010-local-install-and-address.md`.
+
+---
+
+# On a NAS with Docker
 
 ## The big picture
 **One machine (your NAS) runs the app and holds all the data. Every shop PC just opens a web browser to it.** Nothing is installed on the other PCs — they only need a bookmark. This is what lets everyone share the same job board and pricing.
@@ -13,7 +31,7 @@
 - About 10 minutes.
 
 ## Good things already set up for you
-- Runs on **port 3000**.
+- Runs on **port 3000** (the image sets `PORT=3000`; the friendly `.local` name is for the Windows PC install, not Docker).
 - The database is one file at `/app/data/dp-erp.db`. You map `/app/data` to a NAS folder so it's permanent and backed up.
 - On its **first start it builds the database and loads your price list automatically** — no fake sample jobs. Step 5 turns it into the labeled **production** database with your admin account.
 - **Backs itself up every night at 2 AM** into `/app/data/backups`, checks each copy, keeps 14 days + 8 weeks (`docs/BACKUP.md`).

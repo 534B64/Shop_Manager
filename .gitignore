@@ -14,3 +14,4 @@ pre-reorg-snapshot-*.zip
 # Local business files, never committed
 *.xlsx
 Shop Manager Feature Update.txt
+runtime/
