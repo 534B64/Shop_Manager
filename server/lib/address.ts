@@ -45,3 +45,14 @@ export function reachableAddresses(dbPath: string, env: NodeJS.ProcessEnv = proc
   if (listenPort === null) return { hostname, port: null, addresses: [] as string[] };
   return { hostname, port: listenPort, addresses: addressList(hostname, listenPort, lanInterfaces().map((i) => i.address)) };
 }
+
+/**
+ * The port to listen on. PORT always wins. Otherwise port 80 ONLY for an install that Setup
+ * configured (production with a shop hostname); everything else stays on 3000 exactly as before,
+ * so an existing install that is merely updated keeps its address.
+ */
+export function chooseListenPort(env: NodeJS.ProcessEnv, isProd: boolean, hostname: string | null): { port: number; fromEnv: boolean } {
+  const fromEnv = env.PORT ? Number(env.PORT) : null;
+  if (fromEnv !== null && Number.isInteger(fromEnv) && fromEnv > 0 && fromEnv < 65536) return { port: fromEnv, fromEnv: true };
+  return { port: isProd && hostname ? 80 : 3000, fromEnv: false };
+}

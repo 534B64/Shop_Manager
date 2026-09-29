@@ -8,7 +8,7 @@ import path from 'node:path';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { createClient } from '@libsql/client';
-import { demoSeedProblem, prodInitProblem, restoreDatasetProblem, type FileState } from './db/dataset.js';
+import { demoSeedProblem, prodInitProblem, prodInitAlreadySetUp, restoreDatasetProblem, type FileState } from './db/dataset.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const TSX = path.join(here, '..', 'node_modules', 'tsx', 'dist', 'cli.mjs');
@@ -136,4 +136,13 @@ describe('scripts', () => {
     const init = run('init-prod.ts', { DB_PATH: demo, ...admin });
     expect(init.code).toBe(1);
   }, 120_000);
+});
+
+describe('prodInitAlreadySetUp (Setup re-run)', () => {
+  it('leaves labeled or used databases alone, but still initializes a server-created empty one', () => {
+    expect(prodInitAlreadySetUp({ dataset: 'production' })).toBe(true);
+    expect(prodInitAlreadySetUp({ hasData: true })).toBe(true);
+    expect(prodInitAlreadySetUp({ dataset: null, hasData: false })).toBe(false);
+    expect(prodInitAlreadySetUp({ foreign: true, hasData: true })).toBe(false); // still refused by init-prod
+  });
 });

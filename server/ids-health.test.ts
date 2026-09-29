@@ -86,6 +86,16 @@ describe('health: version and build', () => {
     expect('build' in h).toBe(true);
   });
 
+  it('shows the shop name and LAN addresses only to signed-in users; the port stays public', async () => {
+    const anon = (await app.inject({ method: 'GET', url: '/api/health' })).json();
+    expect('port' in anon).toBe(true);
+    expect('addresses' in anon).toBe(false);
+    expect('hostname' in anon).toBe(false);
+    const signed = (await app.inject({ method: 'GET', url: '/api/health', headers: admin.headers })).json();
+    expect('addresses' in signed).toBe(true);
+    expect('hostname' in signed).toBe(true);
+  });
+
   it('loadBuildInfo reads dist/build-id.json and package.json; missing files are null/unknown', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dperp-build-'));
     try {

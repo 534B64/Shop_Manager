@@ -17,14 +17,14 @@ second shop.
    `SHASUMS256.txt`. No admin rights, no system change, nothing to uninstall (delete the folder), and
    the app runs on a Node version we chose rather than whatever the PC has. Every launcher prefers
    `runtime\node`, else falls back to the system Node, so developers are unaffected.
-2. **`http://<shopname>.local`, served on port 80 by a built-in mDNS responder.** Port 80 removes the
+2. **`http://<shopname>.local`, served on port 80 (once Setup has configured the install; existing installs keep 3000 until then) by a built-in mDNS responder.** Port 80 removes the
    `:3000`; mDNS (`server/lib/mdns.ts`, about 150 lines on `node:dgram`) removes the IP address. The
    responder answers only `<hostname>.local` (A records from the PC's current LAN IPs, an NSEC "no IPv6"
    for AAAA) and starts only in production with a configured hostname. If port 80 is busy or refused the
    server falls back to 3000 and logs the address. `/api/health` and Settings > Shop list the `.local`
    address and a `http://<LAN-IP>` fallback because some Android versions do not resolve `.local`.
 3. **Firewall rules are the one elevated step.** Inbound TCP 80/3000 and UDP 5353 for the app's
-   `node.exe` on Private networks. Setup asks first and elevates only `setup/firewall.ps1` (UAC prompt);
+   `node.exe` on Private networks. Setup asks first and elevates only an inline, fixed-template PowerShell command (UAC prompt; nothing is run from the user-writable app folder);
    declining leaves a working single-PC install and says plainly that other devices will not connect.
 4. **Update = unzip over the folder + `Update.bat`.** It backs up (`db:backup`, abort on failure), stops the
    app, `npm ci`, builds, restarts. `data\` (database, backups, `shop.env`, logs) is not in the ZIP, so an

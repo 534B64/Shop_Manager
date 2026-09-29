@@ -38,16 +38,20 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   // Public. `dataset` ('demo' | 'production' | null = unlabeled, ADR 0008)
   // drives the client's DEMO DATA banner.  /  let the client notice
   // a server that was not restarted after an update (server/lib/build-info.ts).
-  app.get('/api/health', async () => ({
+  app.get('/api/health', async (req) => {
+  const where = reachableAddresses(DB_PATH);
+  return {
     ok: true,
     app: 'decals-plus-shop-manager',
     version: BUILD_INFO.version,
     build: BUILD_INFO.build,
     time: new Date().toISOString(),
     dataset: await getSetting('dataset'),
-    // Where other devices can open the app (shop name + LAN IP), for Settings -> Shop.
-    ...reachableAddresses(DB_PATH),
-  }));
+    // The port is public (the launcher scripts need it). The shop name and LAN IPs are only for signed-in users.
+    port: where.port,
+    ...(req.user ? { hostname: where.hostname, addresses: where.addresses } : {}),
+  };
+  });
 
   await app.register(authRoutes);
   await app.register(materialRoutes);

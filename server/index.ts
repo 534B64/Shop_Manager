@@ -8,7 +8,7 @@ import { getSetting } from './modules/settings/index.js';
 import { holdServerLock } from './db/server-lock.js';
 import { backupConfigFromEnv, scheduleDailyBackups } from './db/backup.js';
 import { startMdns, lanInterfaces, MDNS_PORT } from './lib/mdns.js';
-import { readShopHostname, addressList, setListenPort } from './lib/address.js';
+import { readShopHostname, addressList, setListenPort, chooseListenPort } from './lib/address.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = await buildApp({ logger: true });
@@ -63,11 +63,12 @@ process.once('SIGTERM', shutdown);
 process.once('SIGINT', shutdown);
 process.once('exit', () => lock.release());
 
-// Port: PORT if set; otherwise 80 in production (so the address needs no ":3000") and 3000 in
-// development. If 80 is busy or not allowed, fall back to 3000 and say so.
-const portFromEnv = process.env.PORT ? Number(process.env.PORT) : null;
+// Port: PORT if set; otherwise 80 for a Setup-configured production install (hostname set) and 3000 in
+// every other case (dev, existing installs). If 80 is busy or not allowed, fall back to 3000 and say so.
+const chosen = chooseListenPort(process.env, isProd, hostname);
+const portFromEnv = chosen.fromEnv ? chosen.port : null;
 const host = process.env.HOST ?? '0.0.0.0';
-const wanted = portFromEnv ?? (isProd ? 80 : 3000);
+const wanted = chosen.port;
 let port = wanted;
 try {
   await app.listen({ port, host });

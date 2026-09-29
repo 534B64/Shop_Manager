@@ -27,19 +27,8 @@ try {
   }
   Say ("  Using Node.js " + (& node --version))
 
-  # ---- 2. git pull (optional) ----
-  Step 2 'Looking for a newer version'
-  if (-not $NoGit -and (Test-Path (Join-Path $root '.git')) -and (Get-Command git -ErrorAction SilentlyContinue)) {
-    $dirty = (& git status --porcelain)
-    if ($dirty) { Say '  This folder has local changes, so it was not updated with git. (Skipping git pull.)' }
-    else {
-      & git pull --ff-only
-      if ($LASTEXITCODE -ne 0) { Say '  git pull did not work; continuing with the files that are here.' }
-    }
-  } else { Say '  Using the files that are in this folder (unzip the new version over it first).' }
-
-  # ---- 3. Backup ----
-  Step 3 'Backing up your data first'
+  # ---- 2. Backup (before anything changes) ----
+  Step 2 'Backing up your data first'
   $dbFile = Join-Path $root 'data\dp-erp.db'
   $env:DB_PATH = './data/dp-erp.db'
   if ((Test-Path $dbFile) -and ((Get-Item $dbFile).Length -gt 0)) {
@@ -52,6 +41,17 @@ try {
       throw 'The backup did not finish, so the update was NOT done. Your shop data and the running app are unchanged. See docs\BACKUP.md, or ask for help.'
     }
   } else { Say '  No shop database here yet - nothing to back up.' }
+
+  # ---- 3. git pull (optional, only after a good backup) ----
+  Step 3 'Looking for a newer version'
+  if (-not $NoGit -and (Test-Path (Join-Path $root '.git')) -and (Get-Command git -ErrorAction SilentlyContinue)) {
+    $dirty = (& git status --porcelain)
+    if ($dirty) { Say '  This folder has local changes, so it was not updated with git. (Skipping git pull.)' }
+    else {
+      & git pull --ff-only
+      if ($LASTEXITCODE -ne 0) { Say '  git pull did not work; continuing with the files that are here.' }
+    }
+  } else { Say '  Using the files that are in this folder (unzip the new version over it first).' }
 
   # ---- 4. Stop ----
   Step 4 'Stopping the app for a moment'
@@ -67,11 +67,17 @@ try {
 
   # ---- 6. Start ----
   Step 6 'Starting the app'
-  if ($NoStart) { Say '  Skipped (-NoStart).'; exit 0 }
-  & wscript.exe //nologo "$root\batch\start-hidden.vbs" fast noopen
-  & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\open-when-ready.ps1"
-  Write-Host ''
-  Write-Host ' Update finished. Shop Manager is running the new version.' -ForegroundColor Green
+  if ($NoStart) { Say '  Skipped (-NoStart).' } else {
+    & wscript.exe //nologo "$root\batch\start-hidden.vbs" fast noopen
+    & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\open-when-ready.ps1"
+    Write-Host ''
+    Write-Host ' Update finished. Shop Manager is running the new version.' -ForegroundColor Green
+  }
+  if (-not (Test-Path (Get-ShopEnvPath $root))) {
+    Write-Host ''
+    Write-Host ' Run Setup.bat once to give the app its shop name and open it to other devices.' -ForegroundColor Yellow
+    Write-Host ' Until then it stays at http://localhost:3000 (other devices: http://<this PC''s IP>:3000).' -ForegroundColor Yellow
+  }
   exit 0
 } catch {
   Write-Host ''

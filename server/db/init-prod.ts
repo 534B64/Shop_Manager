@@ -13,7 +13,7 @@
 import readline from 'node:readline/promises';
 import { createClient } from '@libsql/client';
 import {
-  fileState, prodInitProblem, readDataset, hasBusinessData, isForeignDb,
+  fileState, type Dataset, prodInitProblem, prodInitAlreadySetUp, readDataset, hasBusinessData, isForeignDb,
 } from './dataset.js';
 
 const PIN_RE = /^[0-9]{4,12}$/;
@@ -26,7 +26,7 @@ function fail(msg: string): never {
 
 // 1. Is the target safe to initialize? Decide before creating anything.
 const file = fileState(dbPath);
-let facts = {};
+let facts: { foreign?: boolean; dataset?: Dataset | null; hasData?: boolean } = {};
 if (file.exists && file.size > 0) {
   const c = createClient({ url: `file:${dbPath}` });
   try {
@@ -38,6 +38,10 @@ if (file.exists && file.size > 0) {
   }
 }
 const problem = prodInitProblem({ dbPath, file, ...facts });
+if (problem && process.env.INIT_SKIP_IF_SETUP === '1' && file.exists && file.size > 0 && prodInitAlreadySetUp(facts)) {
+  console.log(`A shop database already exists at ${dbPath}. Leaving it exactly as it is.`);
+  process.exit(0);
+}
 if (problem) fail(problem);
 
 // 2. The first admin.

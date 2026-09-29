@@ -29,6 +29,15 @@ When a new version is out:
 
 It backs up your data first, stops the app for a minute, installs the new version, starts the app again and opens it. If the backup fails it stops before changing anything.
 
+### Already running an older version (switching an existing install)
+
+If the shop already uses Shop Manager at an address like `localhost:3000`, do this once:
+
+1. **Close the app** (double-click `6-Stop-Hidden.bat` in the `batch` folder, or restart the PC).
+2. Unzip the new version over the old folder and double-click **`Update.bat`**. Until step 3 the app keeps working at the same old address.
+3. Double-click **`Setup.bat`** once and answer the questions. **Say yes when it asks about the firewall** (Windows will ask permission) - that is what lets other devices connect. Your data is not touched.
+4. **Tell everyone the new address** Setup shows (like `decalsplus.local`) and replace the old `:3000` bookmarks on every PC and phone.
+
 ## Back up
 
 The app backs itself up **every night at 2 AM** while the shop PC is on. The backups are in `data\backups` inside the app folder; each one is checked when it is made, and the last 14 days and 8 weeks are kept.

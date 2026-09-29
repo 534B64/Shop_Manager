@@ -19,6 +19,8 @@ const CLASS_IN = 1;
 const CACHE_FLUSH = 0x8000;
 const TTL = 120;
 const LEGACY_TTL = 10; // RFC 6762 6.7: answers to non-mDNS resolvers stay short
+const MAX_QUESTIONS = 8; // queries with more questions are ignored
+const MAX_ECHOED = 4; // a legacy reply repeats at most this many questions
 
 /** Lowercase letters, digits and hyphens only; 1-63 chars, no leading/trailing hyphen. Else null. */
 export function normalizeHostname(input: string | null | undefined): string | null {
@@ -62,6 +64,7 @@ export function parseQuery(buf: Buffer): Query | null {
   if (flags & 0x8000) return null; // a response, not a question
   if (((flags >> 11) & 0xf) !== 0) return null; // not a standard query
   const count = buf.readUInt16BE(4);
+  if (count > MAX_QUESTIONS) return null; // a many-question packet is junk or an amplification attempt
   const questions: Question[] = [];
   let pos = 12;
   for (let i = 0; i < count; i++) {
@@ -121,7 +124,7 @@ export function buildResponse(query: Query, ourName: string, ips: string[], lega
   const head = Buffer.alloc(12);
   head.writeUInt16BE(legacy ? query.id : 0, 0);
   head.writeUInt16BE(0x8400, 2); // response + authoritative
-  const echoed = legacy ? mine.filter((q) => q.type === TYPE_A || q.type === TYPE_ANY || q.type === TYPE_AAAA) : [];
+  const echoed = legacy ? mine.filter((q) => q.type === TYPE_A || q.type === TYPE_ANY || q.type === TYPE_AAAA).slice(0, MAX_ECHOED) : [];
   head.writeUInt16BE(echoed.length, 4);
   head.writeUInt16BE(answers.length, 6);
   const qs = echoed.map((q) => {

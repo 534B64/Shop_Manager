@@ -62,11 +62,12 @@ try {
   $name = if ($ShopName) { $ShopName } else { Ask-Text '  What is your shop called? (for example: Decals Plus)' $cfg['SHOP_NAME'] }
   if (-not $name) { $name = 'Shop' }
   $suggest = if ($cfg['SHOP_HOSTNAME']) { $cfg['SHOP_HOSTNAME'] } else { ConvertTo-Hostname $name }
-  $host_ = if ($Hostname) { $Hostname.ToLower() } else { Ask-Text "  Address other devices will type (letters and numbers only)" $suggest }
+  $host_ = if ($Hostname) { $Hostname } else { Ask-Text "  Address other devices will type (letters and numbers only)" $suggest }
+  $host_ = $host_.Trim().ToLower()
   while (-not (Test-Hostname $host_)) {
-    if ($Hostname) { throw "'$Hostname' is not a valid address name (lowercase letters, numbers and hyphens only)." }
-    Say '  Use only lowercase letters, numbers and hyphens (no spaces).'
-    $host_ = Ask-Text '  Address name' $suggest
+    if ($Hostname) { throw "'$Hostname' is not a valid address name (letters, numbers and hyphens only)." }
+    Say '  Use only letters, numbers and hyphens (no spaces).'
+    $host_ = (Ask-Text '  Address name' $suggest).Trim().ToLower()
   }
   Write-ShopEnv $root @{ SHOP_NAME = $name; SHOP_HOSTNAME = $host_ }
   Say "  Saved. Other devices will open  http://$host_.local"
@@ -75,22 +76,19 @@ try {
   Step 6 'The shop database'
   $dbFile = Join-Path $root 'data\dp-erp.db'
   $env:DB_PATH = './data/dp-erp.db'
-  if ((Test-Path $dbFile) -and ((Get-Item $dbFile).Length -gt 0)) {
-    Say '  A shop database already exists. Leaving it exactly as it is.'
-  } else {
-    Say '  No database yet. Next you create the first admin account (you can add everyone else later).'
-    Invoke-Step 'Creating the shop database' { & npm run db:init-prod }
+  # db:init-prod decides: a labeled or used database is left alone (INIT_SKIP_IF_SETUP), while a missing,
+  # empty or freshly server-created one gets its first admin account (you can add everyone else later).
+  $env:INIT_SKIP_IF_SETUP = '1'
+  if (-not ((Test-Path $dbFile) -and ((Get-Item $dbFile).Length -gt 0))) {
+    Say '  No database yet. Next you create the first admin account.'
   }
+  Invoke-Step 'Setting up the shop database' { & npm run db:init-prod }
+  Remove-Item Env:INIT_SKIP_IF_SETUP -ErrorAction SilentlyContinue
 
   # ---- 7. Firewall ----
   Step 7 'Letting other devices connect (Windows Firewall)'
   $nodeExe = (Get-Command node).Source
-  $rulesOk = $false
-  try {
-    $r = Get-NetFirewallRule -DisplayName 'Shop Manager web page*' -ErrorAction SilentlyContinue
-    if ($r) { $rulesOk = [bool](($r | Get-NetFirewallApplicationFilter).Program -contains $nodeExe) }
-  } catch { }
-  if ($rulesOk) { Say '  Firewall rules are already in place.' } else {
+  if (Test-FirewallRules $nodeExe) { Say '  Firewall rules are already in place.' } else {
     Say '  Other PCs and phones need two firewall openings (private networks only): the web page and the'
     Say '  shop name lookup. Windows asks for administrator permission for this one step.'
     $doFw = if ($OpenFirewall) { $OpenFirewall -eq 'yes' } else { Ask-YesNo '  Add the firewall rules now?' $true }
@@ -98,13 +96,16 @@ try {
       Say '  Skipped. Without them, only THIS PC can open Shop Manager - other devices will not connect.'
       Say '  Run Setup.bat again any time to add them.'
     } elseif ($DryRun) {
-      & powershell -NoProfile -ExecutionPolicy Bypass -File "$PSScriptRoot\firewall.ps1" -NodePath $nodeExe -DryRun
+      Would 'run this elevated (PowerShell as administrator, nothing read from a file):'
+      (Get-FirewallScript $nodeExe) -split "`r?`n" | ForEach-Object { Say "      $_" }
     } else {
+      $script_ = Get-FirewallScript $nodeExe
+      $encoded = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes($script_))
       try {
-        Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "`"$PSScriptRoot\firewall.ps1`"", '-NodePath', "`"$nodeExe`""
-        $chk = Get-NetFirewallRule -DisplayName 'Shop Manager web page*' -ErrorAction SilentlyContinue
-        if ($chk) { Say '  Firewall rules added.' } else { Say '  The rules were not added (permission was declined?). Other devices will not connect until they are.' }
-      } catch { Say '  Windows did not get permission, so nothing was changed. Other devices will not connect until this is done.' }
+        Start-Process powershell -Verb RunAs -Wait -ArgumentList '-NoProfile', '-ExecutionPolicy', 'Bypass', '-EncodedCommand', $encoded
+      } catch { Say '  Windows did not get permission, so nothing was changed.' }
+      if (Test-FirewallRules $nodeExe) { Say '  Firewall rules added (both the web page and the shop name lookup).' }
+      else { Write-Host '  WARNING: the firewall rules were NOT added. Other devices will not be able to connect until they are. Run Setup.bat again and say yes when Windows asks.' -ForegroundColor Yellow }
     }
   }
 
@@ -116,10 +117,11 @@ try {
     & wscript.exe //nologo "$root\batch\start-hidden.vbs" fast noopen
     $health = $null
     for ($i = 0; $i -lt 45 -and -not $health; $i++) { Start-Sleep 1; $health = Get-ShopHealth (Get-LikelyPorts) }
-    if ($health) { $port = [int]$health.port; Say "  Running on port $port." } else { Say '  It did not answer yet. Check data\logs\ if the shortcut does not open.' }
+    if ($health) { $port = if ($health.port) { [int]$health.port } else { [int]$health.probedPort }; Say "  Running on port $port." } else { Say '  It did not answer yet. Check data\logs\ if the shortcut does not open.' }
   }
   $suffix = if ($port -eq 80) { '' } else { ":$port" }
-  $address = "http://$host_.local$suffix"
+  $address = "http://$host_.local$suffix"        # for OTHER devices
+  $localAddress = "http://localhost$suffix"      # on this PC itself, always works
 
   $desktop = [Environment]::GetFolderPath('Desktop')
   $startupFolder = [Environment]::GetFolderPath('Startup')
@@ -135,8 +137,8 @@ try {
     Say "  Created $path"
   }
   $urlFile = Join-Path $desktop 'Shop Manager.url'
-  if ($DryRun) { Would "create shortcut $urlFile -> $address" } else {
-    [IO.File]::WriteAllText($urlFile, "[InternetShortcut]`r`nURL=$address`r`nIconFile=$root\public\favicon.ico`r`nIconIndex=0`r`n")
+  if ($DryRun) { Would "create shortcut $urlFile -> $localAddress" } else {
+    [IO.File]::WriteAllText($urlFile, "[InternetShortcut]`r`nURL=$localAddress`r`nIconFile=$root\public\favicon.ico`r`nIconIndex=0`r`n")
     Say "  Created $urlFile"
   }
   New-Lnk (Join-Path $desktop 'Start Shop Manager.lnk') 'wscript.exe' ('//nologo "' + $root + '\batch\start-hidden.vbs" fast') 'Start Shop Manager' 7
@@ -155,7 +157,8 @@ try {
   Write-Host '============================================' -ForegroundColor Green
   Write-Host ' All set.' -ForegroundColor Green
   Write-Host '============================================' -ForegroundColor Green
-  Say " Open Shop Manager:    $address"
+  Say " On this PC:           $localAddress   (the desktop shortcut)"
+  Say " On other devices:     $address"
   $lan = @(Get-NetIPAddress -AddressFamily IPv4 -ErrorAction SilentlyContinue | Where-Object { $_.IPAddress -notmatch '^(127|169\.254)\.' -and $_.PrefixOrigin -ne 'WellKnown' -and $_.InterfaceAlias -notmatch 'vethernet|wsl|hyper-v|virtualbox|vmware|vbox|docker|tailscale|zerotier|vpn|loopback' } | Select-Object -ExpandProperty IPAddress)
   if ($lan.Count) { Say ("   (if a phone cannot open that, try http://" + $lan[0] + $suffix + ")") }
   Say ' Sign in with:        the admin name and PIN you chose'
@@ -163,7 +166,7 @@ try {
   Say " Backups (nightly):   $root\data\backups"
   Write-Host ''
   Say ' Next:'
-  Say '  1. Open the address above and sign in.'
+  Say '  1. Open the address above and sign in. Tell everyone the new address and replace any old :3000 bookmarks.'
   Say '  2. Add an account for each person: Settings > Accounts.'
   Say '  3. To update later: unzip the new version over this folder, then double-click Update.bat.'
   Say '  4. Copy data\backups somewhere safe now and then (a USB drive or cloud folder).'

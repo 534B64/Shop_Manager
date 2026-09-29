@@ -170,3 +170,12 @@ export function markProductionProblem(s: {
   }
   return null;
 }
+
+/**
+ * Setup.bat re-runs db:init-prod with INIT_SKIP_IF_SETUP=1: a database that is already labeled or
+ * holds shop data is "set up" and left alone (exit 0); a missing/empty file or one the server
+ * created on first start (tables, no label, no data) still gets initialized.
+ */
+export function prodInitAlreadySetUp(s: { foreign?: boolean; dataset?: Dataset | null; hasData?: boolean }): boolean {
+  return !s.foreign && Boolean(s.dataset || s.hasData);
+}

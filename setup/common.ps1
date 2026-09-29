@@ -5,6 +5,36 @@ $ProgressPreference = 'SilentlyContinue'   # the progress bar makes downloads ve
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 
 $script:AppId = 'decals-plus-shop-manager'
+$script:NoInternetMsg = 'Could not download Node.js. Check the internet connection and run Setup.bat again.'
+
+$script:FwWebRule = 'Shop Manager web page (TCP 80, 3000)'
+$script:FwNameRule = 'Shop Manager shop name (UDP 5353)'
+
+# The PowerShell text that adds the two firewall rules. It runs elevated, so it is built here from a
+# fixed template plus a checked node.exe path - never read from a file in the (user-writable) app folder.
+function Get-FirewallScript([string]$NodePath) {
+  if ($NodePath -notmatch '^[A-Za-z]:\\[^"''`$;&|<>%^]+\\node\.exe$' -or -not (Test-Path -LiteralPath $NodePath -PathType Leaf)) {
+    throw "Unexpected node.exe location: $NodePath"
+  }
+  return @"
+`$ErrorActionPreference = 'Stop'
+foreach (`$n in '$script:FwWebRule', '$script:FwNameRule') { Get-NetFirewallRule -DisplayName `$n -ErrorAction SilentlyContinue | Remove-NetFirewallRule }
+New-NetFirewallRule -DisplayName '$script:FwWebRule' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 80,3000 -Program '$NodePath' -Profile Private | Out-Null
+New-NetFirewallRule -DisplayName '$script:FwNameRule' -Direction Inbound -Action Allow -Protocol UDP -LocalPort 5353 -Program '$NodePath' -Profile Private | Out-Null
+"@
+}
+
+# True when BOTH rules exist and point at this node.exe.
+function Test-FirewallRules([string]$NodePath) {
+  try {
+    foreach ($n in $script:FwWebRule, $script:FwNameRule) {
+      $r = Get-NetFirewallRule -DisplayName $n -ErrorAction SilentlyContinue
+      if (-not $r) { return $false }
+      if (-not ((($r | Get-NetFirewallApplicationFilter).Program) -contains $NodePath)) { return $false }
+    }
+    return $true
+  } catch { return $false }
+}
 
 function Get-ShopRoot { Split-Path -Parent $PSScriptRoot }
 
@@ -41,8 +71,10 @@ function Read-ShopEnv([string]$Root) {
 function Write-ShopEnv([string]$Root, [hashtable]$Values) {
   $file = Get-ShopEnvPath $Root
   New-Item -ItemType Directory -Force -Path (Split-Path $file) | Out-Null
+  $merged = Read-ShopEnv $Root            # keep any other keys already in the file
+  foreach ($k in $Values.Keys) { $merged[$k] = $Values[$k] }
   $lines = @('# Written by Setup.bat. Safe to delete; Setup asks again.')
-  foreach ($k in ($Values.Keys | Sort-Object)) { $lines += ('{0}={1}' -f $k, $Values[$k]) }
+  foreach ($k in ($merged.Keys | Sort-Object)) { $lines += ('{0}={1}' -f $k, $merged[$k]) }
   [IO.File]::WriteAllLines($file, $lines, (New-Object Text.UTF8Encoding($false)))
 }
 
@@ -71,19 +103,19 @@ function Get-NodeLtsVersion {
 function Install-RuntimeNode([string]$Root) {
   $dir = Get-RuntimeNodeDir $Root
   if (Test-Path (Join-Path $dir 'node.exe')) { Write-Host '  Node.js is already here. Skipping.'; return }
-  $ver = Get-NodeLtsVersion
+  try { $ver = Get-NodeLtsVersion } catch { throw $script:NoInternetMsg }
   $zipName = "node-$ver-win-x64.zip"
   $base = "https://nodejs.org/dist/$ver"
   $tmp = Join-Path ([IO.Path]::GetTempPath()) ('shop-node-' + [Guid]::NewGuid().ToString('N').Substring(0, 8))
   New-Item -ItemType Directory -Force -Path $tmp | Out-Null
   try {
     Write-Host "  Downloading Node.js $ver (about 30 MB) from nodejs.org ..."
-    $sums = (Invoke-WebRequest -UseBasicParsing "$base/SHASUMS256.txt").Content
+    try { $sums = (Invoke-WebRequest -UseBasicParsing "$base/SHASUMS256.txt").Content } catch { throw $script:NoInternetMsg }
     $line = ($sums -split "`n" | Where-Object { $_ -match ('\s' + [regex]::Escape($zipName) + '\s*$') } | Select-Object -First 1)
     if (-not $line) { throw "nodejs.org's checksum list does not include $zipName." }
     $expected = ($line.Trim() -split '\s+')[0].ToLower()
     $zip = Join-Path $tmp $zipName
-    Invoke-WebRequest -UseBasicParsing "$base/$zipName" -OutFile $zip
+    try { Invoke-WebRequest -UseBasicParsing "$base/$zipName" -OutFile $zip } catch { throw $script:NoInternetMsg }
     $actual = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
     if ($actual -ne $expected) { throw "The download is damaged or was changed on the way (checksum $actual, expected $expected). Nothing was installed." }
     Write-Host "  Checksum OK ($actual)."
@@ -131,7 +163,11 @@ function Get-ShopHealth([int[]]$Ports) {
   foreach ($p in $Ports) {
     try {
       $h = Invoke-RestMethod -UseBasicParsing -TimeoutSec 2 -Uri "http://127.0.0.1:$p/api/health"
-      if ($h.app -eq $script:AppId) { return $h }
+      if ($h.app -eq $script:AppId) {
+        # Older servers do not report their port, so remember the one we asked.
+        $h | Add-Member -NotePropertyName probedPort -NotePropertyValue $p -Force
+        return $h
+      }
     } catch { }
   }
   return $null

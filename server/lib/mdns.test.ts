@@ -3,7 +3,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildResponse, encodeName, normalizeHostname, parseQuery, pickAddresses, startMdns, type Query,
 } from './mdns.js';
-import { addressList, parseEnvFile, readShopHostname } from './address.js';
+import { addressList, chooseListenPort, parseEnvFile, readShopHostname } from './address.js';
 
 /** A hand-built DNS question packet. */
 function packet(id: number, qs: { name: string; type: number; cls?: number }[], flags = 0): Buffer {
@@ -173,5 +173,33 @@ describe('shop address helpers', () => {
     expect(addressList('decalsplus', 80, ['192.168.1.20'])).toEqual(['http://decalsplus.local', 'http://192.168.1.20']);
     expect(addressList('decalsplus', 3000, ['192.168.1.20'])).toEqual(['http://decalsplus.local:3000', 'http://192.168.1.20:3000']);
     expect(addressList(null, 80, ['1.2.3.4'])).toEqual(['http://1.2.3.4']);
+  });
+});
+
+describe('reflection limits', () => {
+  it('ignores a query with more than 8 questions', () => {
+    const many = Array.from({ length: 9 }, () => ({ name: 'decalsplus.local', type: 1 }));
+    expect(parseQuery(packet(1, many))).toBeNull();
+    expect(parseQuery(packet(1, many.slice(0, 8)))).not.toBeNull();
+  });
+  it('echoes at most 4 questions in a legacy reply', () => {
+    const q = parseQuery(packet(1, Array.from({ length: 8 }, () => ({ name: 'decalsplus.local', type: 1 }))))!;
+    const r = buildResponse(q, 'decalsplus', ['1.2.3.4'], true)!;
+    expect(r.readUInt16BE(4)).toBe(4);
+  });
+});
+
+describe('chooseListenPort', () => {
+  it('PORT always wins', () => {
+    expect(chooseListenPort({ PORT: '8080' }, true, 'shop')).toEqual({ port: 8080, fromEnv: true });
+    expect(chooseListenPort({ PORT: '8080' }, false, null)).toEqual({ port: 8080, fromEnv: true });
+  });
+  it('port 80 only for a production install that Setup configured', () => {
+    expect(chooseListenPort({}, true, 'decalsplus')).toEqual({ port: 80, fromEnv: false });
+    expect(chooseListenPort({}, true, null)).toEqual({ port: 3000, fromEnv: false }); // existing install: unchanged
+    expect(chooseListenPort({}, false, 'decalsplus')).toEqual({ port: 3000, fromEnv: false }); // dev
+  });
+  it('ignores a junk PORT', () => {
+    expect(chooseListenPort({ PORT: 'abc' }, true, null).port).toBe(3000);
   });
 });

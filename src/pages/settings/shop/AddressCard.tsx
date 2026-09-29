@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react';
 import { Card, CardHeader } from '../../../components/m3';
+import { get } from '../../../lib/api';
 
 /** "Open on other devices": the addresses to type on a phone or another PC (GET /api/health). */
 export default function AddressCard() {
   const [addresses, setAddresses] = useState<string[] | null | undefined>();
   useEffect(() => {
-    fetch('/api/health').then((r) => (r.ok ? r.json() : null))
-      .then((h: { addresses?: string[] } | null) => setAddresses(h ? h.addresses ?? [] : null))
+    get<{ addresses?: string[] }>('/api/health')
+      .then((h) => setAddresses(h.addresses ?? []))
       .catch(() => setAddresses(null));
   }, []);
   const [friendly, ...fallback] = addresses ?? [];

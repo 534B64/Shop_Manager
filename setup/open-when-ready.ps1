@@ -22,16 +22,10 @@ if (-not $health) {
   exit 1
 }
 
-$port = [int]$health.port
+# On the shop PC itself, localhost always works. (Older servers report no port; use the one we probed.)
+$port = if ($health.port) { [int]$health.port } else { [int]$health.probedPort }
 $suffix = if ($port -eq 80) { '' } else { ":$port" }
 $url = "http://localhost$suffix"
-# Prefer the friendly name if this PC can find it; otherwise localhost always works on this PC.
-if ($health.hostname) {
-  try {
-    [void][Net.Dns]::GetHostAddresses("$($health.hostname).local")
-    $url = "http://$($health.hostname).local$suffix"
-  } catch { }
-}
 Write-Host $url
 if (-not $NoOpen) { Start-Process $url }
 exit 0
