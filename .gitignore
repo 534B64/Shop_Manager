@@ -10,3 +10,7 @@ data/
 vite.config.ts.timestamp-*.mjs
 *.lnk
 pre-reorg-snapshot-*.zip
+
+# Local business files, never committed
+*.xlsx
+Shop Manager Feature Update.txt
