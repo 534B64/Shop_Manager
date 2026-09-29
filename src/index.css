@@ -16,6 +16,15 @@ body {
   font-family: Roboto, system-ui, -apple-system, 'Segoe UI', sans-serif;
 }
 
+/* Native <select> popups: Chrome on Windows paints the option list white
+   even in dark mode while the text inherits the dark theme's light color.
+   Give options the theme's own surface + text so they read in every theme. */
+select option,
+select optgroup {
+  background-color: rgb(var(--md-sys-color-surface-container-rgb));
+  color: rgb(var(--md-sys-color-on-surface-rgb));
+}
+
 /* Visible focus ring everywhere (keyboard only). */
 :focus-visible {
   outline: 3px solid rgb(var(--md-sys-color-primary-rgb));
