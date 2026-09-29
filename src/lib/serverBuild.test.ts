@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { serverIsOutOfDate, CLIENT_BUILD } from './serverBuild';
+import { serverIsOutOfDate, serverState, buildTime, CLIENT_BUILD } from './serverBuild';
 
 describe('serverIsOutOfDate', () => {
   it('matching builds are fine', () => {
@@ -19,5 +19,26 @@ describe('serverIsOutOfDate', () => {
   });
   it('tests run as a dev build', () => {
     expect(CLIENT_BUILD).toBe('dev');
+  });
+
+  it('parses the build time from the id', () => {
+    expect(buildTime('abc1234-mum41ij8')).toBe(parseInt('mum41ij8', 36));
+    expect(buildTime('nogit-mum41ij8')).toBe(parseInt('mum41ij8', 36));
+    expect(buildTime('dev')).toBeNull();
+    expect(buildTime(null)).toBeNull();
+  });
+  it('server NEWER than the page (tab opened before a restart) -> reload, not restart', () => {
+    expect(serverState('abc-mum41ij8', { build: 'def-mum42000' })).toBe('server-newer');
+    expect(serverIsOutOfDate('abc-mum41ij8', { build: 'def-mum42000' })).toBe(false);
+  });
+  it('server OLDER than the page, or no build at all -> restart message', () => {
+    expect(serverState('def-mum42000', { build: 'abc-mum41ij8' })).toBe('server-older');
+    expect(serverState('def-mum42000', {})).toBe('server-older');
+    expect(serverState('def-mum42000', { build: 'garbage' })).toBe('server-older');
+  });
+  it('same build, dev, or failed check -> ok', () => {
+    expect(serverState('abc-mum41ij8', { build: 'abc-mum41ij8' })).toBe('ok');
+    expect(serverState('dev', { build: 'x-1' })).toBe('ok');
+    expect(serverState('abc-mum41ij8', null)).toBe('ok');
   });
 });

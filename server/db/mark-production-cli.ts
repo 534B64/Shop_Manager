@@ -8,8 +8,7 @@
 // Writes the label and one audit-log row; changes nothing else.
 import readline from 'node:readline/promises';
 import { createClient } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
+import { readMigrationFiles } from 'drizzle-orm/migrator';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { fileState, markProductionProblem, readDataset, hasBusinessData, isForeignDb, type Dataset } from './dataset.js';
@@ -25,10 +24,14 @@ function fail(msg: string): never {
 // 1. Is this database eligible? Read-only until you confirm.
 const file = fileState(dbPath);
 let facts: { foreign?: boolean; dataset?: Dataset | null; hasData?: boolean } = {};
+let applied = 0;
 if (file.exists && file.size > 0) {
   const c = createClient({ url: `file:${dbPath}` });
   try {
     facts = { foreign: await isForeignDb(c), dataset: await readDataset(c), hasData: await hasBusinessData(c) };
+    if (!facts.foreign) {
+      applied = Number((await c.execute('SELECT count(*) AS n FROM __drizzle_migrations')).rows[0].n);
+    }
   } catch (err) {
     fail(`${dbPath} could not be read as a database (${(err as Error).message}).`);
   } finally {
@@ -37,6 +40,12 @@ if (file.exists && file.size > 0) {
 }
 const problem = markProductionProblem({ dbPath, file, ...facts });
 if (problem) fail(problem);
+// This tool never upgrades the live database: the app does that when it starts.
+const total = readMigrationFiles({ migrationsFolder }).length;
+if (applied < total) {
+  fail(`${dbPath} has not been updated to this version of the app yet (${applied} of ${total} updates applied). `
+    + 'Start the app once so it updates the database, then run this again.');
+}
 
 // 2. Confirm.
 let answer = process.env.CONFIRM ?? '';
@@ -55,13 +64,13 @@ const c = createClient({ url: `file:${dbPath}` });
 try {
   await c.execute('PRAGMA busy_timeout = 10000');
   await c.execute('PRAGMA foreign_keys = ON');
-  await migrate(drizzle(c), { migrationsFolder }); // the same upgrade the app does at start; no-op when current
   const tx = await c.transaction('write');
   try {
     // Re-check inside the write lock in case something labeled it meanwhile.
     if ((await readDataset(tx)) !== null) throw new Error('the database was labeled while this ran');
     const at = new Date().toISOString();
-    await tx.execute({ sql: 'INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', args: ['dataset', 'production'] });
+    const wrote = await tx.execute({ sql: 'INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', args: ['dataset', 'production'] });
+    if (wrote.rowsAffected !== 1) throw new Error('the label was not written (a dataset setting already exists)');
     await tx.execute({ sql: 'INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)', args: ['datasetCreatedAt', at] });
     await tx.execute({
       sql: 'INSERT INTO audit_log (at, user_id, action, entity, entity_id, before_json, after_json) VALUES (?, NULL, ?, ?, ?, NULL, ?)',

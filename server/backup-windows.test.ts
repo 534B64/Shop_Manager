@@ -29,7 +29,7 @@ import { createClient } from '@libsql/client';
 import { drizzle } from 'drizzle-orm/libsql';
 import { migrate } from 'drizzle-orm/libsql/migrator';
 import { renameRetry, unlinkRetry, retryLocked, FileLockedError } from './db/fs-retry.js';
-import { backupDatabase, cleanStalePartials, BackupError } from './db/backup.js';
+import { backupDatabase, cleanStalePartials, restoreBackup, BackupError, RestoreRollbackError } from './db/backup.js';
 
 const noSleep = async () => undefined;
 const err = (code: string) => Object.assign(new Error(`${code}: busy`), { code });
@@ -144,5 +144,44 @@ describe('backup on a machine that locks open files', () => {
 
   it('a missing database is still a BackupError', async () => {
     await expect(backupDatabase({ dbPath: path.join(root, 'nope.db'), backupDir })).rejects.toBeInstanceOf(BackupError);
+  });
+
+  describe('restore rollback', () => {
+    const setup = async (name: string) => {
+      const target = path.join(root, name, 'target.db');
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.copyFileSync(dbPath, target);
+      const dir = path.join(root, name, 'bk');
+      const b = await backupDatabase({ dbPath, backupDir: dir, now: new Date(2026, 8, 30, 2, 0, 0) });
+      return { target, file: b.file };
+    };
+    const busy = () => { throw err('EBUSY'); };
+
+    it('a failed swap whose move-back also fails says the database is MISSING and names the set-aside file', async () => {
+      const { target, file } = await setup('rb1');
+      const e = await restoreBackup({ backupFile: file, dbPath: target, now: new Date(2026, 8, 30, 3, 0, 0),
+        retry: { tries: 1, sleep: noSleep, rename: (from, to) => { if (to === target) busy(); fs.renameSync(from, to); } } })
+        .then(() => null, (x) => x as Error);
+      expect(e).toBeInstanceOf(RestoreRollbackError);
+      expect(e!.message).toMatch(/MISSING/);
+      expect(e!.message).toContain('target.pre-restore-2026-09-30_030000.db');
+      expect(e!.message).toMatch(/rename .* back to target\.db/);
+      expect(e!.message).not.toMatch(/nothing was changed/);
+      expect(fs.existsSync(target)).toBe(false);
+      expect(fs.existsSync(path.join(path.dirname(target), 'target.pre-restore-2026-09-30_030000.db'))).toBe(true);
+    });
+
+    it('a failed swap whose move-back works leaves the database in place, reported as unchanged', async () => {
+      const { target, file } = await setup('rb2');
+      let swapFails = 1;
+      const e = await restoreBackup({ backupFile: file, dbPath: target, now: new Date(2026, 8, 30, 3, 0, 0),
+        retry: { tries: 1, sleep: noSleep, rename: (from, to) => {
+          if (from.endsWith('.restoring') && swapFails-- > 0) busy();
+          fs.renameSync(from, to);
+        } } }).then(() => null, (x) => x as Error);
+      expect(e).not.toBeInstanceOf(RestoreRollbackError);
+      expect(e).toBeInstanceOf(BackupError);
+      expect(fs.existsSync(target)).toBe(true);
+    });
   });
 });

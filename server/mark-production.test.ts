@@ -109,4 +109,30 @@ describe('db:mark-production script', () => {
     expect(e.out).toMatch(/no shop data.*db:init-prod/s);
     expect(await q(empty, "SELECT count(*) AS n FROM settings WHERE key = 'dataset'")).toEqual([{ n: 0 }]);
   }, 120_000);
+
+  it('does not upgrade the live database: pending migrations are refused', async () => {
+    const file = await oldRealDb('g');
+    const c = createClient({ url: `file:${file}` });
+    await c.execute('DELETE FROM __drizzle_migrations WHERE rowid = (SELECT max(rowid) FROM __drizzle_migrations)');
+    const applied = (await c.execute('SELECT count(*) AS n FROM __drizzle_migrations')).rows[0].n;
+    c.close();
+    const r = run('mark-production-cli.ts', { DB_PATH: file, CONFIRM: 'PRODUCTION' });
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/Start the app once so it updates the database, then run this again/);
+    expect(await q(file, "SELECT count(*) AS n FROM settings WHERE key = 'dataset'")).toEqual([{ n: 0 }]);
+    expect((await q(file, 'SELECT count(*) AS n FROM __drizzle_migrations'))[0].n).toBe(applied); // not migrated
+  }, 90_000);
+
+  it('refuses, with no audit row and no "Done", when the label row could not be written', async () => {
+    const file = await oldRealDb('h');
+    const c = createClient({ url: `file:${file}` });
+    await c.execute("INSERT INTO settings (key, value) VALUES ('dataset', 'something-else')"); // reads as unlabeled, but the row exists
+    c.close();
+    const r = run('mark-production-cli.ts', { DB_PATH: file, CONFIRM: 'PRODUCTION' });
+    expect(r.code).toBe(1);
+    expect(r.out).not.toMatch(/Done\./);
+    expect(r.out).toMatch(/label was not written/);
+    expect(await q(file, "SELECT count(*) AS n FROM audit_log WHERE action = 'dataset.mark_production'")).toEqual([{ n: 0 }]);
+    expect(await q(file, "SELECT count(*) AS n FROM settings WHERE key = 'datasetCreatedAt'")).toEqual([{ n: 0 }]);
+  }, 90_000);
 });

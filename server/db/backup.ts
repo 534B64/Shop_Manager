@@ -32,6 +32,9 @@ export const DEFAULT_KEEP_WEEKLY = 8;
 
 export class BackupError extends Error {}
 
+/** A restore failed AND could not put the old database back: the shop has no dp-erp.db until a person renames the set-aside file. */
+export class RestoreRollbackError extends BackupError {}
+
 // ---------------- config ----------------
 
 export interface BackupConfig { backupDir: string; keepDaily: number; keepWeekly: number; hour: number | null }
@@ -373,10 +376,20 @@ async function restoreLocked(backupFile: string, dbPath: string, folder: string,
     };
   } catch (err) {
     // Put anything already moved aside back, so the shop keeps its database.
+    const stuck: string[] = [];
     if (!fs.existsSync(dbPath)) {
-      for (const f of setAside) await renameRetry(f, dbPath + f.slice(f.lastIndexOf('.db') + 3), retry).catch(() => undefined);
+      for (const f of setAside) {
+        try { await renameRetry(f, dbPath + f.slice(f.lastIndexOf('.db') + 3), retry); } catch { stuck.push(f); }
+      }
     }
     await unlinkRetry(restoring, retry).catch(() => undefined);
+    if (stuck.length) {
+      const main = stuck.find((f) => f.endsWith('.db')) ?? stuck[0];
+      throw new RestoreRollbackError(`the restore failed (${(err as Error).message}) AND the old database could not be put back, `
+        + `so ${dbPath} is MISSING right now. Your data is safe in ${stuck.join(', ')}. `
+        + `Before starting the app, rename ${main} back to ${path.basename(dbPath)} `
+        + `(and any -wal / -shm files next to it the same way), in the same folder.`);
+    }
     throw err instanceof BackupError ? err : new BackupError(`restore failed, nothing was changed: ${(err as Error).message}`);
   }
 }

@@ -1,7 +1,7 @@
 // `npm run db:restore -- <backup-file>` — put a backup back as the live
 // database (ADR 0008, docs/BACKUP.md). The app must be stopped. The current
 // database is moved aside (never deleted) before the backup goes in.
-import { restoreBackup } from './backup.js';
+import { restoreBackup, RestoreRollbackError } from './backup.js';
 
 const backupFile = process.argv[2];
 const dbPath = process.env.DB_PATH ?? './data/dp-erp.db';
@@ -24,6 +24,10 @@ Start the app again and check today's jobs, payments and a stock count.
 `);
   process.exit(0);
 } catch (err) {
-  console.error(`\nRESTORE REFUSED — ${(err as Error).message}\nThe current database was not changed.\n`);
+  if (err instanceof RestoreRollbackError) {
+    console.error(`\nRESTORE FAILED — ${err.message}\nDO NOT start the app until you have done that.\n`);
+  } else {
+    console.error(`\nRESTORE REFUSED — ${(err as Error).message}\nThe current database was not changed.\n`);
+  }
   process.exit(1);
 }
