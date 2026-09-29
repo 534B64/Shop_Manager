@@ -2,8 +2,6 @@
 import { useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { Button, DataTable, EmptyState, showSnackbar } from '../../../components/m3';
-import { post } from '../../../lib/api';
-import { approvalCancelled, errorText } from '../../../lib/errorText';
 import type { InventoryItem } from '../../../lib/types';
 import InventoryHeader from '../components/InventoryHeader';
 import CountBanner from '../components/CountBanner';
@@ -33,21 +31,9 @@ export default function InventoryList() {
   const [adding, setAdding] = useState(false);
   const [filtering, setFiltering] = useState(false);
   const [adjusting, setAdjusting] = useState<InventoryItem | null>(null);
-  const [busy, setBusy] = useState<number | null>(null);
   const locations = useLocations();
   const items = useUrlPaged<Row>('/api/inventory', listApiParams(s), s.page, (page) => update({ page }), { pageSize: 50 });
   const groupCounts = (items.data?.groups ?? []) as GroupCount[];
-
-  // One tap = one ledger row (−1 used / +1 received), like the old list's −/+ buttons.
-  // A cashier's −1 gets the manager-approval prompt from lib/api like any adjustment.
-  async function step(i: InventoryItem, delta: 1 | -1) {
-    setBusy(i.id);
-    try {
-      await post(`/api/inventory/${i.id}/adjust`, { delta, reason: delta < 0 ? 'used' : 'received' });
-      showSnackbar(`${i.name}: ${delta < 0 ? 'used 1' : 'received 1'}`);
-      items.reload();
-    } catch (e) { if (!approvalCancelled(e)) showSnackbar(errorText(e)); } finally { setBusy(null); }
-  }
 
   const chips: { key: keyof ListState; label: string }[] = [];
   if (s.match !== 'contains') chips.push({ key: 'match', label: MATCH_LABEL[s.match] });
@@ -69,7 +55,7 @@ export default function InventoryList() {
       <CountBanner quietWhenNotDue />
       <ListToolbar state={s} update={update} onMoreFilters={() => setFiltering(true)} activeChips={chips} />
       <DataTable label="Inventory items" rows={items.rows} rowKey={(r) => r.id}
-        columns={itemColumns(cats.name, sups.byId, { step, adjust: setAdjusting, busy })}
+        columns={itemColumns(cats.name, sups.byId, { adjust: setAdjusting })}
         loading={items.loading} error={items.error} onRetry={items.reload} paging={items}
         onRowClick={(r) => nav(`/inventory/${r.id}`)}
         groupOf={(r) => r.groupKey} hideRow={(r) => !!r.groupKey && s.closed.includes(r.groupKey)}
