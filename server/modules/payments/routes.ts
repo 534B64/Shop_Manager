@@ -5,7 +5,7 @@ import { db, withTx } from '../../db/index.js';
 import { payments, jobs, customers, customerCredits, drawerSessions } from '../../db/schema/index.js';
 import { parsePage, PagingError, type PageQuery } from '../../lib/paging.js';
 import { paymentPage, paymentColumns, balances } from './lists.js';
-import { recordPayment, requireOpenDrawer, paidNetCents, PaymentError } from './service.js';
+import { recordPayment, requireOpenDrawer, paidNetCents, refundedCents, PaymentError } from './service.js';
 import { posSettings } from '../settings/index.js';
 import { invoiceIfSettled, SalesError } from '../sales/index.js';
 import { requireApproval, approvalSchema } from '../auth/index.js';
@@ -42,10 +42,18 @@ export async function paymentRoutes(app: FastifyInstance) {
     return q.orderBy(desc(payments.createdAt)).limit(100);
   });
 
+  // What an order has had refunded so far (live refund rows) - the client's
+  // per-order approval hint (D14).
+  app.get('/api/payments/refunded', async (req, reply) => {
+    const jobId = Number((req.query as { jobId?: string }).jobId);
+    if (!Number.isInteger(jobId)) return reply.code(400).send({ error: 'jobId is required' });
+    return { jobId, refundedCents: await refundedCents(jobId) };
+  });
+
   // kind 'payment' reduces what's owed; kind 'refund' is money handed back.
   // method 'credit' draws down / restores the customer's credit balance.
   // Every method needs an open drawer (409 drawer_closed, D12); refunds over
-  // the Settings threshold need a manager (D13). Cash payments may send tenderedCents
+  // the Settings threshold, counted per order, need a manager (D13/D14). Cash payments may send tenderedCents
   // (change is recorded). A payment that settles the job issues its invoice
   // in the same transaction (Phase 3, ADR 0007) — returned as `invoice`.
   app.post('/api/payments', {
@@ -92,10 +100,12 @@ export async function paymentRoutes(app: FastifyInstance) {
             return reply.code(409).send({ error: `Refund is more than was paid on this job (${(paid / 100).toFixed(2)})` });
           }
           const { refundApprovalThresholdCents } = await posSettings(tx);
-          if (body.amountCents > refundApprovalThresholdCents) {
+          // D14: the limit counts per order — refunds so far + this one.
+          const priorTotalCents = await refundedCents(job.id, tx);
+          if (priorTotalCents + body.amountCents > refundApprovalThresholdCents) {
             const approver = await requireApproval(req, reply, { action: 'payment.refund', entity: 'job', entityId: job.id,
               reason: body.note ?? null, details: { amountCents: body.amountCents, method: body.method, clientRef: body.clientRef,
-                thresholdCents: refundApprovalThresholdCents } });
+                priorTotalCents, thresholdCents: refundApprovalThresholdCents } });
             if (!approver) return reply;
             approvalId = approver.approvalId;
           }

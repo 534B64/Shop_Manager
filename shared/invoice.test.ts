@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   allocate, priceInvoice, priceCounterSale, taxExemptReason, lineTaxCents, taxForTotal, returnLineRefund, refundDueCents,
   changeCents, overShortCents, formatInvoiceNumber, parseInvoiceNumber, buildZReport,
+  refundNeedsManager, refundApprovalHint,
 } from './invoice';
 import { grandTotalCents } from './priceVerify';
 
@@ -135,5 +136,20 @@ describe('counter sale tax (D10)', () => {
     expect(taxExemptReason('ab')).toBeNull();
     expect(taxExemptReason(undefined)).toBeNull();
     expect(taxExemptReason('x'.repeat(121))).toBeNull();
+  });
+});
+
+describe('refund approval limit per order (D14)', () => {
+  it('adds the order\u2019s earlier refunds to this one', () => {
+    expect(refundNeedsManager(0, 5000, 5000)).toBe(false);
+    expect(refundNeedsManager(4000, 1000, 5000)).toBe(false);
+    expect(refundNeedsManager(4000, 2000, 5000)).toBe(true);
+  });
+
+  it('words the hint in plain language', () => {
+    expect(refundApprovalHint(0, 4000, 5000)).toBeNull();
+    expect(refundApprovalHint(0, 6000, 5000)).toBe('Over $50.00 \u2014 a manager approves this refund.');
+    expect(refundApprovalHint(4000, 2000, 5000)).toMatch(/has \$40\.00 refunded already .* refunding \$20\.00 more needs a manager/);
+    expect(refundApprovalHint(4000, 2000, 5000, 'return')).toMatch(/this return needs a manager/);
   });
 });

@@ -1,6 +1,6 @@
 // Owner decisions 2026-09-26 (ADR 0007): D10 counter sales taxed by default
 // with a logged tax exemption, D11 void defaults by invoice source, D12 every
-// payment needs an open drawer, D13 one refund threshold. Own SQLite file;
+// payment needs an open drawer, D13 one refund threshold (D14: counted per order). Own SQLite file;
 // the first block runs with NO drawer open.
 import { beforeAll, afterAll, describe, it, expect } from 'vitest';
 import fs from 'node:fs';
@@ -205,7 +205,9 @@ describe('D13: one refund threshold (Settings, default $50)', () => {
     expect(under.statusCode).toBe(201);
     const [a] = await auditFor('payment.refund', under.json().id);
     expect(a.approvalId).toBeNull();
-    const at = await pay({ jobId: job.id, amountCents: 5000, method: 'card', kind: 'refund' }, cashier);
+    const jobAt = await makeJob(10000);
+    await pay({ jobId: jobAt.id, amountCents: 9000, method: 'card' });
+    const at = await pay({ jobId: jobAt.id, amountCents: 5000, method: 'card', kind: 'refund' }, cashier);
     expect(at.statusCode).toBe(201); // at the threshold: no approval
 
     const job2 = await makeJob(10000);
@@ -237,6 +239,85 @@ describe('D13: one refund threshold (Settings, default $50)', () => {
     const res = await as(cashier)({ method: 'POST', url: `/api/payments/${p.id}/void`, payload: { reason: 'typo' } });
     expect(res.statusCode).toBe(403);
     expect(res.json()).toMatchObject({ error: 'approval_required', action: 'payment.void' });
+  });
+});
+
+describe('D14: the refund limit counts per order', () => {
+  const approval = () => ({ name: manager.name, pin: manager.pin });
+  const refund = (jobId: number, amountCents: number, extra: Record<string, unknown> = {}) =>
+    pay({ jobId, amountCents, method: 'card', kind: 'refund', ...extra }, cashier);
+  const paidJob = async (paid = 9000) => {
+    const job = await makeJob(10000);
+    await pay({ jobId: job.id, amountCents: paid, method: 'card' });
+    return job;
+  };
+
+  it('splitting a refund does not dodge the manager: $40 alone is free, $20 more on the same order needs approval', async () => {
+    const job = await paidJob();
+    expect((await refund(job.id, 4000)).statusCode).toBe(201);
+    const second = await refund(job.id, 2000);
+    expect(second.statusCode).toBe(403);
+    expect(second.json()).toMatchObject({ error: 'approval_required', action: 'payment.refund' });
+    const ok = await refund(job.id, 2000, { approval: approval() });
+    expect(ok.statusCode).toBe(201);
+    const [a] = await auditFor('payment.refund', ok.json().id);
+    expect(a.approvalId).not.toBeNull();
+    const { approvals } = schema;
+    const [row] = await dbm.db.select().from(approvals).where(orm.eq(approvals.id, a.approvalId!));
+    expect(JSON.parse(row.details as string)).toMatchObject({ amountCents: 2000, priorTotalCents: 4000, thresholdCents: 5000 });
+    const seen = (await inject({ method: 'GET', url: `/api/payments/refunded?jobId=${job.id}` })).json();
+    expect(seen).toEqual({ jobId: job.id, refundedCents: 6000 });
+  });
+
+  it('a different order is unaffected', async () => {
+    const a = await paidJob();
+    const b = await paidJob();
+    expect((await refund(a.id, 4000)).statusCode).toBe(201);
+    expect((await refund(b.id, 4000)).statusCode).toBe(201);
+    expect((await inject({ method: 'GET', url: `/api/payments/refunded?jobId=${b.id}` })).json().refundedCents).toBe(4000);
+  });
+
+  it('a return counts earlier refunds on the same invoice job', async () => {
+    const s = (await sale({ title: 'Split refund', amountCents: 4000, taxable: false })).json();
+    const inv = await invoice(s.invoice.number);
+    expect((await refund(inv.jobId, 3000)).statusCode).toBe(201); // alone: under $50
+    const body = { clientRef: ref(), invoiceId: s.invoice.id, reason: 'changed mind', refundMethod: 'card',
+      lines: [{ invoiceLineId: inv.lines[0].id, qty: 1 }] };
+    const denied = await as(cashier)({ method: 'POST', url: '/api/returns', payload: body }); // $40 return alone is under $50
+    expect(denied.statusCode).toBe(403);
+    expect(denied.json()).toMatchObject({ error: 'approval_required', action: 'return.refund' });
+    const ok = await as(cashier)({ method: 'POST', url: '/api/returns', payload: { ...body, approval: approval() } });
+    expect(ok.statusCode).toBe(201);
+    expect(ok.json().approvalId).not.toBeNull();
+  });
+
+  it('follows the Settings threshold', async () => {
+    await inject({ method: 'PUT', url: '/api/settings/pos', payload: { refundApprovalThresholdCents: 1000 } });
+    try {
+      const job = await paidJob(5000);
+      expect((await refund(job.id, 600)).statusCode).toBe(201);
+      expect((await refund(job.id, 600)).statusCode).toBe(403); // 1200 > 1000
+    } finally {
+      await inject({ method: 'PUT', url: '/api/settings/pos', payload: { refundApprovalThresholdCents: 5000 } });
+    }
+  });
+
+  it('a voided refund no longer counts toward the total', async () => {
+    const job = await paidJob();
+    const first = (await refund(job.id, 4000)).json();
+    const v = await as(manager)({ method: 'POST', url: `/api/payments/${first.id}/void`, payload: { reason: 'wrong order' } });
+    expect(v.statusCode).toBe(200);
+    expect((await inject({ method: 'GET', url: `/api/payments/refunded?jobId=${job.id}` })).json().refundedCents).toBe(0);
+    expect((await refund(job.id, 4000)).statusCode).toBe(201); // 0 + 4000: no approval
+  });
+
+  it('the cap still holds and voids still always need a manager', async () => {
+    const job = await paidJob(3000);
+    expect((await refund(job.id, 4000, { approval: approval() })).statusCode).toBe(409); // more than was paid
+    const r = (await refund(job.id, 1000)).json();
+    const v = await as(cashier)({ method: 'POST', url: `/api/payments/${r.id}/void`, payload: { reason: 'typo' } });
+    expect(v.statusCode).toBe(403);
+    expect(v.json()).toMatchObject({ action: 'payment.void' });
   });
 });
 
