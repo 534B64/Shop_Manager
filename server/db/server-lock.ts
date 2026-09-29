@@ -11,6 +11,11 @@ import os from 'node:os';
 export const HEARTBEAT_MS = 30_000;
 export const STALE_MS = 90_000;
 
+/** Delete a lock file. Retries briefly (Windows/OneDrive can hold a file for a moment); gone already is fine. */
+function removeLockFile(file: string) {
+  try { fs.rmSync(file, { force: true, maxRetries: 10, retryDelay: 200 }); } catch { /* it goes stale by itself */ }
+}
+
 export const lockPath = (dbPath: string) => `${dbPath}.server-lock`;
 
 /** Why a restore must wait, or null when no live server holds the database. */
@@ -49,7 +54,7 @@ export function restoreInProgressProblem(dbPath: string, now = Date.now()): stri
 export function holdRestoreLock(dbPath: string): () => void {
   const file = restoreLockPath(dbPath);
   fs.writeFileSync(file, JSON.stringify({ host: os.hostname(), pid: process.pid, startedAt: new Date().toISOString() }));
-  return () => { try { fs.unlinkSync(file); } catch { /* already gone */ } };
+  return () => removeLockFile(file);
 }
 
 /** Take the lock for this server process. Returns a release function. */
@@ -70,7 +75,7 @@ export function holdServerLock(dbPath: string): { release: () => void; replacedL
     clearInterval(beat);
     try {
       const cur = JSON.parse(fs.readFileSync(file, 'utf8')) as typeof me;
-      if (cur.host === me.host && cur.pid === me.pid) fs.unlinkSync(file);
+      if (cur.host === me.host && cur.pid === me.pid) removeLockFile(file);
     } catch { /* already gone */ }
   };
   return { release, replacedLive };

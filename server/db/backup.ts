@@ -10,11 +10,11 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { createClient, type Client } from '@libsql/client';
-import { drizzle } from 'drizzle-orm/libsql';
-import { migrate } from 'drizzle-orm/libsql/migrator';
 import { readMigrationFiles } from 'drizzle-orm/migrator';
-import { readDataset, hasBusinessData, restoreDatasetProblem, type Dataset } from './dataset.js';
+import { execFile } from 'node:child_process';
+import { DATA_TABLES, restoreDatasetProblem, type Dataset } from './dataset.js';
 import { serverRunningProblem, restoreInProgressProblem, holdRestoreLock } from './server-lock.js';
+import { renameRetry, unlinkRetry, type RetryOptions } from './fs-retry.js';
 
 const MIGRATIONS_FOLDER = path.join(path.dirname(fileURLToPath(import.meta.url)), 'migrations');
 
@@ -102,10 +102,30 @@ export function planRotation(dbPath: string, fileNames: string[], keepDaily: num
 }
 
 /** Apply planRotation to the backup folder. Only ever touches this database's backup files. */
-export function rotateBackups(dbPath: string, backupDir: string, keepDaily: number, keepWeekly: number) {
+export async function rotateBackups(
+  dbPath: string, backupDir: string, keepDaily: number, keepWeekly: number, retry: RetryOptions = {},
+) {
   const plan = planRotation(dbPath, fs.readdirSync(backupDir), keepDaily, keepWeekly);
-  for (const f of plan.remove) fs.unlinkSync(path.join(backupDir, f));
+  for (const f of plan.remove) await unlinkRetry(path.join(backupDir, f), retry);
   return plan;
+}
+
+export const STALE_PARTIAL_MS = 24 * 3600_000;
+
+/** Delete this database's `.partial` files older than a day: leftovers of a backup that
+ *  died half way. Finished backups (no .partial) are never touched. Returns the names removed. */
+export async function cleanStalePartials(
+  dbPath: string, backupDir: string, now = Date.now(), retry: RetryOptions = {},
+): Promise<string[]> {
+  if (!fs.existsSync(backupDir)) return [];
+  const re = new RegExp(`^${escapeRe(baseName(dbPath))}-\\d{4}-\\d{2}-\\d{2}_\\d{6}\\.db\\.partial$`);
+  const removed: string[] = [];
+  for (const f of fs.readdirSync(backupDir).filter((n) => re.test(n))) {
+    const stat = fs.statSync(path.join(backupDir, f), { throwIfNoEntry: false });
+    if (!stat || now - stat.mtimeMs < STALE_PARTIAL_MS) continue;
+    try { await unlinkRetry(path.join(backupDir, f), retry); removed.push(f); } catch { /* still locked: next run tries again */ }
+  }
+  return removed;
 }
 
 /** Newest backup of this database in the folder, or null. */
@@ -146,22 +166,32 @@ async function migrationsOf(c: Client): Promise<{ hashes: string[]; last: number
   return { hashes: rows.map((r) => String(r.hash)), last: rows.length ? Number(rows[rows.length - 1].created_at) : 0 };
 }
 
+const CHILD_SCRIPT = path.join(path.dirname(fileURLToPath(import.meta.url)), 'db-child.mjs');
+const CHILD_TIMEOUT_MS = 5 * 60_000;
+
+/** Run db-child.mjs (its own process — see the note there) and return its JSON reply. */
+function runChild<T>(req: Record<string, unknown>): Promise<T> {
+  const arg = Buffer.from(JSON.stringify(req)).toString('base64');
+  return new Promise((resolve, reject) => {
+    execFile(process.execPath, [CHILD_SCRIPT, arg], { timeout: CHILD_TIMEOUT_MS, maxBuffer: 10_000_000, windowsHide: true },
+      (err, stdout, stderr) => {
+        if (err) return reject(new Error(stderr.trim() || err.message));
+        try { resolve(JSON.parse(stdout.trim().split('\n').pop() ?? '')); } catch { reject(new Error('no answer from the checker process')); }
+      });
+  });
+}
+
 /** Read-only look at a database file: integrity, row counts, migrations, label.
- *  Any failure to read it (not a database, torn file) comes back as integrity text. */
-export async function inspectDb(file: string, opts: { integrity?: boolean } = {}): Promise<DbFacts> {
-  const c = open(file);
+ *  Any failure to read it (not a database, torn file) comes back as integrity text.
+ *  Done in a separate process so this process never holds the file open (Windows
+ *  cannot rename an open file). `hasData` is filled in when `data: true`. */
+export async function inspectDb(file: string, opts: { integrity?: boolean; data?: boolean } = {}): Promise<DbFacts & { hasData: boolean }> {
+  if (!fs.existsSync(file)) throw new BackupError(`${file} does not exist`);
   try {
-    let integrity = 'ok';
-    if (opts.integrity !== false) {
-      const rows = (await c.execute('PRAGMA integrity_check')).rows;
-      integrity = rows.map((r) => String(Object.values(r)[0])).join('; ');
-    }
-    const m = await migrationsOf(c);
-    return { integrity, counts: await counts(c), migrations: m.hashes, lastMigrationAt: m.last, dataset: await readDataset(c) };
+    return await runChild({ op: 'inspect', file, integrity: opts.integrity !== false, keyTables: KEY_TABLES,
+      dataTables: opts.data ? DATA_TABLES : [] });
   } catch (err) {
-    return { integrity: `unreadable: ${(err as Error).message}`, counts: {}, migrations: [], lastMigrationAt: 0, dataset: null };
-  } finally {
-    c.close();
+    return { integrity: `unreadable: ${(err as Error).message}`, counts: {}, migrations: [], lastMigrationAt: 0, dataset: null, hasData: false };
   }
 }
 
@@ -176,11 +206,13 @@ export interface BackupResult {
 /** Take a verified backup, then rotate. Throws BackupError on any failure;
  *  a failed copy is removed and rotation does not run. */
 export async function backupDatabase(o: {
-  dbPath: string; backupDir: string; keepDaily?: number; keepWeekly?: number; now?: Date;
+  dbPath: string; backupDir: string; keepDaily?: number; keepWeekly?: number; now?: Date; retry?: RetryOptions;
 }): Promise<BackupResult> {
   const t0 = Date.now();
+  const retry = o.retry ?? {};
   if (!fs.existsSync(o.dbPath)) throw new BackupError(`database ${o.dbPath} does not exist`);
   fs.mkdirSync(o.backupDir, { recursive: true });
+  await cleanStalePartials(o.dbPath, o.backupDir, Date.now(), retry);
   const final = path.join(o.backupDir, backupFileName(o.dbPath, o.now ?? new Date()));
   const partial = `${final}.partial`;
   if (fs.existsSync(final)) throw new BackupError(`${final} already exists — wait a second and run it again`);
@@ -197,13 +229,13 @@ export async function backupDatabase(o: {
     const again = (await migrationsOf(src)).hashes;
     if (again.join() !== srcMigrations.join()) throw new BackupError('the database was upgraded during the backup — run it again');
   } catch (err) {
-    fs.rmSync(partial, { force: true });
-    throw err instanceof BackupError ? err : new BackupError(`copy failed: ${(err as Error).message}`);
-  } finally {
     src.close();
+    await unlinkRetry(partial, retry).catch(() => undefined);
+    throw err instanceof BackupError ? err : new BackupError(`copy failed: ${(err as Error).message}`);
   }
+  src.close(); // every client is closed before the copy is checked and renamed
 
-  const copy = await inspectDb(partial);
+  const copy = await inspectDb(partial); // in a separate process: nothing here holds the copy open
   const problems: string[] = [];
   if (copy.integrity !== 'ok') problems.push(`integrity_check: ${copy.integrity}`);
   if (copy.migrations.join() !== srcMigrations.join()) {
@@ -216,12 +248,15 @@ export async function backupDatabase(o: {
     }
   }
   if (problems.length) {
-    fs.rmSync(partial, { force: true });
+    await unlinkRetry(partial, retry).catch(() => undefined);
     throw new BackupError(`verification failed — ${problems.join('; ')}`);
   }
-  fs.renameSync(partial, final);
+  await renameRetry(partial, final, retry).catch((err) => {
+    throw new BackupError(`the backup was made and checked but could not be finished: ${(err as Error).message} `
+      + `The checked copy is still there as ${partial}.`);
+  });
 
-  const plan = rotateBackups(o.dbPath, o.backupDir, o.keepDaily ?? DEFAULT_KEEP_DAILY, o.keepWeekly ?? DEFAULT_KEEP_WEEKLY);
+  const plan = await rotateBackups(o.dbPath, o.backupDir, o.keepDaily ?? DEFAULT_KEEP_DAILY, o.keepWeekly ?? DEFAULT_KEEP_WEEKLY, retry);
   return {
     file: final, bytes: fs.statSync(final).size, ms: Date.now() - t0,
     counts: copy.counts, migrations: copy.migrations.length, dataset: copy.dataset,
@@ -257,7 +292,7 @@ function appMigrationTimes(folder: string): number[] {
  *   5. rename the prepared copy into place
  */
 export async function restoreBackup(o: {
-  backupFile: string; dbPath: string; now?: Date; migrationsFolder?: string;
+  backupFile: string; dbPath: string; now?: Date; migrationsFolder?: string; retry?: RetryOptions;
 }): Promise<RestoreResult> {
   const folder = o.migrationsFolder ?? MIGRATIONS_FOLDER;
   const backupFile = path.resolve(o.backupFile);
@@ -273,13 +308,13 @@ export async function restoreBackup(o: {
   fs.mkdirSync(path.dirname(dbPath), { recursive: true });
   const releaseRestoreLock = holdRestoreLock(dbPath);
   try {
-    return await restoreLocked(backupFile, dbPath, folder, o.now ?? new Date());
+    return await restoreLocked(backupFile, dbPath, folder, o.now ?? new Date(), o.retry ?? {});
   } finally {
     releaseRestoreLock();
   }
 }
 
-async function restoreLocked(backupFile: string, dbPath: string, folder: string, now: Date): Promise<RestoreResult> {
+async function restoreLocked(backupFile: string, dbPath: string, folder: string, now: Date, retry: RetryOptions): Promise<RestoreResult> {
   if (!fs.existsSync(backupFile)) throw new BackupError(`${backupFile} does not exist`);
   if (fs.existsSync(`${backupFile}-wal`)) {
     throw new BackupError(`${backupFile}-wal exists next to it, so it is a live database copy, not a finished backup. `
@@ -295,8 +330,10 @@ async function restoreLocked(backupFile: string, dbPath: string, folder: string,
   let currentDataset: Dataset | null = null;
   let currentHasData = false;
   if (fs.existsSync(dbPath)) {
-    const c = open(dbPath);
-    try { currentDataset = await readDataset(c); currentHasData = await hasBusinessData(c); } finally { c.close(); }
+    // Looked at in a separate process so this one never holds the current database open when it is renamed.
+    const cur = await inspectDb(dbPath, { integrity: false, data: true });
+    if (cur.integrity.startsWith('unreadable')) throw new BackupError(`the current database cannot be read (${cur.integrity}); nothing was changed`);
+    currentDataset = cur.dataset; currentHasData = cur.hasData;
   }
   const datasetProblem = restoreDatasetProblem({ dbPath, current: currentDataset, currentHasData, backup: b.dataset });
   if (datasetProblem) throw new BackupError(datasetProblem);
@@ -304,18 +341,11 @@ async function restoreLocked(backupFile: string, dbPath: string, folder: string,
   // 3. Prepare the copy. Rollback-journal mode while migrating, so the
   //    prepared file is one self-contained file (the server turns WAL on at start).
   const restoring = `${dbPath}.restoring`;
-  for (const s of ['', '-journal', '-wal', '-shm']) fs.rmSync(restoring + s, { force: true });
+  for (const s of ['', '-journal', '-wal', '-shm']) await unlinkRetry(restoring + s, retry);
   fs.copyFileSync(backupFile, restoring);
   const setAside: string[] = [];
   try {
-    const c = open(restoring);
-    try {
-      await c.execute('PRAGMA journal_mode = DELETE');
-      await c.execute('PRAGMA foreign_keys = ON');
-      await migrate(drizzle(c), { migrationsFolder: folder });
-    } finally {
-      c.close();
-    }
+    await runChild({ op: 'migrate', file: restoring, folder }); // separate process, see db-child.mjs
     const after = await inspectDb(restoring);
     if (after.integrity !== 'ok') throw new BackupError(`integrity_check after upgrade: ${after.integrity}`);
     if (after.migrations.length !== appTimes.length) {
@@ -332,11 +362,11 @@ async function restoreLocked(backupFile: string, dbPath: string, folder: string,
     for (const s of ['', '-wal', '-shm']) {
       if (!fs.existsSync(dbPath + s)) continue;
       if (fs.existsSync(aside + s)) throw new BackupError(`${aside + s} already exists — wait a second and run it again`);
-      fs.renameSync(dbPath + s, aside + s);
+      await renameRetry(dbPath + s, aside + s, retry);
       setAside.push(aside + s);
     }
     // 5. Into place.
-    fs.renameSync(restoring, dbPath);
+    await renameRetry(restoring, dbPath, retry);
     return {
       dbPath, from: backupFile, setAside, backupDataset: b.dataset,
       migrationsBefore: b.migrations.length, migrationsAfter: after.migrations.length, counts: after.counts,
@@ -344,9 +374,9 @@ async function restoreLocked(backupFile: string, dbPath: string, folder: string,
   } catch (err) {
     // Put anything already moved aside back, so the shop keeps its database.
     if (!fs.existsSync(dbPath)) {
-      for (const f of setAside) fs.renameSync(f, dbPath + f.slice(f.lastIndexOf('.db') + 3));
+      for (const f of setAside) await renameRetry(f, dbPath + f.slice(f.lastIndexOf('.db') + 3), retry).catch(() => undefined);
     }
-    fs.rmSync(restoring, { force: true });
+    await unlinkRetry(restoring, retry).catch(() => undefined);
     throw err instanceof BackupError ? err : new BackupError(`restore failed, nothing was changed: ${(err as Error).message}`);
   }
 }

@@ -19,7 +19,7 @@ export interface SqlRunner {
 /** Tables whose rows mean "someone used this database". Migrations fill
  *  materials, suppliers and locations with the shop's starting data, so those
  *  don't count; any change made through the app also writes audit_log. */
-const DATA_TABLES = ['users', 'customers', 'jobs', 'payments', 'customer_credits',
+export const DATA_TABLES = ['users', 'customers', 'jobs', 'payments', 'customer_credits',
   'inventory_items', 'inventory_adjustments', 'cycle_counts', 'audit_log',
   'invoices', 'invoice_lines', 'invoice_voids', 'returns', 'return_lines', 'drawer_sessions'];
 
@@ -140,5 +140,33 @@ export function prodInitProblem(s: {
   if (s.foreign) return `${s.dbPath} is not a Shop Manager database. ${moveIt}`;
   if (s.dataset) return `${s.dbPath} is already labeled "${s.dataset}". ${moveIt}`;
   if (s.hasData) return `${s.dbPath} already has data in it. ${moveIt}`;
+  return null;
+}
+
+/**
+ * The mark-production rule (ADR 0008 amendment): label an EXISTING real database
+ * that has no label yet. Returns why it must be refused, or null.
+ *   no file / empty file           -> refuse (nothing to label; db:init-prod sets up a new real database)
+ *   not a Shop Manager database    -> refuse
+ *   already labeled (either way)   -> refuse (never relabels; a demo database never becomes production)
+ *   unlabeled but no business data -> refuse (db:init-prod is the right tool for a fresh start)
+ */
+export function markProductionProblem(s: {
+  dbPath: string; file: FileState; foreign?: boolean; dataset?: Dataset | null; hasData?: boolean;
+}): string | null {
+  if (!s.file.exists || s.file.size === 0) {
+    return `there is no database at ${s.dbPath}, so there is nothing to label. `
+      + 'To set up a brand-new real database use db:init-prod (8-Init-Production.bat).';
+  }
+  if (s.foreign) return `${s.dbPath} is not a Shop Manager database.`;
+  if (s.dataset === 'production') return `${s.dbPath} is already labeled PRODUCTION. Nothing to do.`;
+  if (s.dataset === 'demo') {
+    return `${s.dbPath} is labeled DEMO (practice data). A demo database is never turned into the real one. `
+      + 'If this really is your real shop data, stop and ask the developer.';
+  }
+  if (!s.hasData) {
+    return `${s.dbPath} has no shop data in it yet (no accounts, customers, jobs or payments), so there is nothing to protect. `
+      + 'To set up a new real database use db:init-prod (8-Init-Production.bat).';
+  }
   return null;
 }

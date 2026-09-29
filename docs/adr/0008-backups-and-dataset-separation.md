@@ -120,14 +120,36 @@ exactly as it was. Because a `VACUUM INTO` backup is a complete file, a manual
 restore (stop, move files aside, copy a backup in as `dp-erp.db`, start) also
 works — documented in `docs/BACKUP.md` for use without a terminal.
 
+## Amendment 2026-09-28 - Windows file locks, labeling an existing database
+
+- **Windows cannot rename an open file, and libsql keeps it open.** On Windows, `@libsql/client`
+  (libsql 0.4.x) does not release a database file when `client.close()` is called - the handle lives
+  until the process exits. Every nightly backup on the owner's Windows PC therefore failed at the final
+  `rename(.partial -> .db)` with EBUSY. Fix: every look inside a file that is about to be renamed
+  (checking the copy, migrating the `.restoring` copy, reading the current database's label before it
+  is set aside) runs in a short-lived child process (`server/db/db-child.mjs`), so the file is really
+  released before the rename. The rename/delete steps also retry EBUSY/EPERM/EACCES for ~10 s
+  (`server/db/fs-retry.ts`; OneDrive and antivirus lock new files briefly), rotation and the lock
+  files use the same retry, and `.partial` files older than a day are removed at the start of each run.
+  Alternatives rejected: `node:sqlite` (the Docker image is Node 20), forcing garbage collection
+  (unreliable), worker threads (a worker hung on exit in testing).
+- **Labeling an existing real database is now a script**, not a hand edit:
+  `npm run db:mark-production` (`batch/9-Mark-Production.bat`). It refuses if the database is
+  already labeled either way, or has no shop data; needs the word PRODUCTION typed (or
+  `CONFIRM=PRODUCTION`); writes the label and one `dataset.mark_production` audit row. This
+  supersedes "a developer task, deliberately not a script" in Consequences below.
+- **Stale-server guard.** `GET /api/health` also returns `version` and `build`; the client build id is
+  compiled in at `npm run build` and written to `dist/build-id.json`, the server reads it once at start.
+  A mismatch (or no `build` at all from an older server) shows an "out of date" banner. The Windows
+  start scripts stop any running server first, so "Start" means "restart".
+
 ## Consequences
 
 - Demo data can only reach a production-labeled database by someone editing the
   label by hand; a production DB can only be created on an empty file.
 - A database made by the old first-run page or before this ADR is unlabeled: the
-  server logs it as such and shows no banner. Moving an existing *real* unlabeled
-  database into production is a developer task (one settings row), deliberately
-  not a script.
+  server logs it as such and shows no banner. Labeling an existing *real* unlabeled
+  database is `npm run db:mark-production` (amendment above; it was a hand edit at first).
 - Recovery point is up to 24 h by default (one nightly backup). More frequent
   backups are one extra `npm run db:backup` from any scheduler; rotation keeps
   the newest per day.

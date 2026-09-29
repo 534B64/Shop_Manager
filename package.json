@@ -15,6 +15,7 @@
     "db:seed": "tsx server/db/seed.ts",
     "db:seed:perf": "tsx server/db/seed-perf.ts",
     "db:init-prod": "tsx server/db/init-prod.ts",
+    "db:mark-production": "tsx server/db/mark-production-cli.ts",
     "db:backup": "tsx server/db/backup-cli.ts",
     "db:restore": "tsx server/db/restore-cli.ts",
     "perf:baseline": "tsx scripts/perf-baseline.ts",

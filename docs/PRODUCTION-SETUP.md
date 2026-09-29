@@ -83,6 +83,32 @@ The practice files stay in `old-practice-…` until you delete them yourself.
 
 ---
 
+### The database you already use (made before labels existed) - `9-Mark-Production.bat`
+
+If you have been ringing up real sales for a while, `http://localhost:3000/api/health` shows
+`"dataset": null` - your real database has no label. That is not broken, but Restore's safety
+rules ("never put practice data over the real shop") only protect a database that is labeled.
+To label it, **once**:
+
+1. Double-click `batch\9-Mark-Production.bat` (the app can keep running).
+2. Read the screen, type the word **PRODUCTION**, press Enter.
+3. It says `Done ... is now labeled PRODUCTION`. Reload `/api/health`: `"dataset":"production"`.
+
+It changes only the label (plus one line in the audit log). It refuses - and changes nothing - if
+the database is already labeled, if it is labeled DEMO, or if it has no shop data in it yet (then
+`8-Init-Production.bat` is the right tool). Developers: `npm run db:mark-production`
+(`CONFIRM=PRODUCTION` skips the question; target `DB_PATH`, default `./data/dp-erp.db`).
+
+## Starting and updating the app on a Windows PC
+
+`4-Start-Production.bat` and `5-Start-Hidden.bat` now always mean **restart**: they build the
+latest app, stop any Shop Manager server that is still running (the same way `6-Stop-Hidden.bat`
+does), wait for port 3000 to be free, then start a fresh one. After you copy in an update, just
+run `5-Start-Hidden.bat` again. If the build fails, the app that was running is left alone.
+
+If a red strip says **"The server is out of date - run 5-Start-Hidden (restart)"**, the page you
+are looking at is newer than the server behind it. Run `5-Start-Hidden.bat` and reload.
+
 ## Confirm it worked
 
 - [ ] Open the app from a shop PC. **There is no DEMO DATA strip** at the top.
@@ -104,4 +130,6 @@ pointed at practice data. Check which file the log line names.
 - `npm run db:seed` — target `DB_PATH` (default `./data/demo.db`). Run the dev server on it with
   `DB_PATH=./data/demo.db npm run dev`.
 - `GET /api/health` returns `dataset: 'demo' | 'production' | null` (null = unlabeled, e.g. a
-  database made before this existed or by the first-run page).
+  database made before this existed or by the first-run page), plus `version` (package.json) and
+  `build` (the id of the client build the server started with; `null` when there is no `dist/`).
+- `npm run db:mark-production` labels an existing unlabeled real database (see above).

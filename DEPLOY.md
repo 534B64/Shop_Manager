@@ -81,7 +81,7 @@ Your entire business data is the `data` folder from Step 1. The app makes a **ch
 - Don't rely on the cloud's copy of the live `dp-erp.db` / `-wal` / `-shm` files — they can be caught mid-sale. The files in `data/backups` are the ones to restore from.
 
 ## Updating to a new version later
-First take a backup by hand (container terminal: `npm run db:backup`, see `docs/BACKUP.md`). Then rebuild (Option A) or re-import (Option B) the image and recreate the container. Your `data` folder stays exactly where it is, so **no data is lost** — you just get the new features. The app upgrades the database itself on start.
+First take a backup by hand (container terminal: `npm run db:backup`, see `docs/BACKUP.md`). Then rebuild (Option A) or re-import (Option B) the image and recreate the container. Your `data` folder stays exactly where it is, so **no data is lost** — you just get the new features. The app upgrades the database itself on start. If a red strip ever says "The server is out of date", the page is newer than the running container: recreate/restart the container so it runs the new image. (On a Windows PC, `batch\5-Start-Hidden.bat` and `4-Start-Production.bat` now stop any old server first and start a fresh one - "Start" means "restart".)
 
 ## If something goes wrong
 - **A PC can't load the page:** check it's on the shop network and the address/port are right; confirm the container is running in Container Manager.

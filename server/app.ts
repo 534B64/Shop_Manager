@@ -10,6 +10,8 @@ import { settingsRoutes, getSetting } from './modules/settings/index.js';
 import { userRoutes } from './modules/users/index.js';
 import { auditRoutes } from './modules/audit/index.js';
 import { salesRoutes, salesReportRoutes } from './modules/sales/index.js';
+import { rejectBadIds } from './lib/ids.js';
+import { BUILD_INFO } from './lib/build-info.js';
 
 /**
  * Build the API with all routes registered, run migrations, but do NOT listen.
@@ -29,12 +31,17 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   // root instance so it covers every plugin below.
   app.decorateRequest('user', null);
   app.addHook('onRequest', authHook);
+  // A non-numeric id in a URL (/api/jobs/abc) is "not found", never a database error.
+  app.addHook('onRequest', rejectBadIds);
 
   // Public. `dataset` ('demo' | 'production' | null = unlabeled, ADR 0008)
-  // drives the client's DEMO DATA banner.
+  // drives the client's DEMO DATA banner.  /  let the client notice
+  // a server that was not restarted after an update (server/lib/build-info.ts).
   app.get('/api/health', async () => ({
     ok: true,
     app: 'decals-plus-shop-manager',
+    version: BUILD_INFO.version,
+    build: BUILD_INFO.build,
     time: new Date().toISOString(),
     dataset: await getSetting('dataset'),
   }));

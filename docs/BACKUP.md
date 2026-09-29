@@ -20,6 +20,28 @@ Plain-language procedure. Why it works this way: `docs/adr/0008-backups-and-data
 
 ---
 
+## Backups on a Windows PC (OneDrive folder)
+
+If the app runs from a PC instead of the NAS, the same nightly backup lands in `data\backups`
+inside the Shop Manager folder. Two Windows-only things to know:
+
+- **How to confirm a backup really finished.** A finished backup is a file named
+  `dp-erp-2026-09-28_020000.db` (ends in `.db`). A file ending in **`.db.partial`** is a backup that
+  did NOT finish - it is never a usable backup. Check `data\backups` each morning: there should be a
+  `.db` file with last night's date and no new `.partial`. Or open a Command Prompt in the Shop
+  Manager folder and run `npm run db:backup`: it must print `BACKUP OK`.
+- **Why it used to fail (fixed 2026-09-28).** Windows will not rename a file that a program still has
+  open, and the backup checked its copy and then renamed it while the checker still held it, so every
+  backup stopped with `EBUSY: resource busy or locked` and left a `.partial` behind. Now the checking is
+  done in a separate short-lived program (so the file is truly released), and the last step (giving the
+  copy its final name) tries again for about 10 seconds if OneDrive or antivirus is touching the file at
+  that moment. If it still cannot finish it says so in plain words and leaves the checked copy as `.partial`.
+- **Leftover `.partial` files clean themselves up.** At the start of every backup run, `.partial` files
+  older than a day are deleted. Finished backups are never touched by this.
+- The same "let go of the file before renaming it" rule now applies to restore (moving the old
+  database aside, putting the new one in), to deleting old backups, and to the restore/heartbeat
+  marker files.
+
 ## Where backups live
 
 | What | Where on the NAS | Notes |

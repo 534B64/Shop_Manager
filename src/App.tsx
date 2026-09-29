@@ -3,6 +3,7 @@ import { useRoutes } from 'react-router-dom';
 import AppShell from './components/shell/AppShell';
 import SignIn from './components/SignIn';
 import ApprovalHost from './components/ApprovalDialog';
+import StaleServerBanner from './components/StaleServerBanner';
 import { ROUTES } from './routes';
 import { get, getToken, setUnauthorizedHandler } from './lib/api';
 import { sessionUser, updateSessionUser, clearSession, type SessionUser } from './lib/session';
@@ -28,9 +29,10 @@ export default function App() {
       .catch(() => { /* offline: keep the cached role; the server still enforces */ });
   }, [signedIn]);
 
-  if (!signedIn) return <SignIn onDone={() => setSignedIn(true)} />;
+  if (!signedIn) return <><StaleServerBanner /><SignIn onDone={() => setSignedIn(true)} /></>;
   return (
     <>
+      <StaleServerBanner />
       <ApprovalHost />
       <AppRoutes />
     </>

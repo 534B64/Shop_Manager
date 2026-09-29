@@ -354,12 +354,12 @@ describe('rotation', () => {
     expect(planRotation(db, files, 0, 0).keep).toEqual([files[1]]);
   });
 
-  it('deletes only the planned files on disk', () => {
+  it('deletes only the planned files on disk', async () => {
     const dir = path.join(root, 'rot');
     fs.mkdirSync(dir);
     const files = Array.from({ length: 20 }, (_, i) => name(new Date(2026, 8, 26 - i, 2)));
     for (const f of [...files, 'keep-me.txt']) fs.writeFileSync(path.join(dir, f), '');
-    const plan = rotateBackups(db, dir, 3, 1);
+    const plan = await rotateBackups(db, dir, 3, 1);
     expect(plan.keep).toHaveLength(3);
     expect(fs.readdirSync(dir).sort()).toEqual([...plan.keep, 'keep-me.txt'].sort());
   });
