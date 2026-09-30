@@ -4,6 +4,7 @@ import { eq, and, isNotNull } from 'drizzle-orm';
 import { db, withTx } from '../../db/index.js';
 import { inventoryItems, materials } from '../../db/schema/index.js';
 import { availabilityCheck, acrossFromDims, type StockLineQuery, type StockResult } from '../../../shared/stockCheck.js';
+import { itemDisplayName } from '../../../shared/itemName.js';
 import { postTransaction } from './service.js';
 import { txnUser, isUniqueViolation, initialAvgCost, validateSkuColor } from './http.js';
 import { audit } from '../audit/index.js';
@@ -74,7 +75,8 @@ export async function rollSkuRoutes(app: FastifyInstance) {
         const colorError = await validateSkuColor(b.materialId, color, tx);
         if (colorError) return reply.code(400).send({ error: colorError });
         let [row] = await tx.insert(inventoryItems).values({
-          name: `${material.name} · ${color} · ${b.nominalWidthIn}in`,
+          name: itemDisplayName({ materialName: material.name, color, nominalWidthIn: b.nominalWidthIn }),
+          nameIsCustom: false,
           materialId: b.materialId, color, nominalWidthIn: b.nominalWidthIn,
           lowStockThreshold: b.lowStockThreshold ?? 0,
           vendor: b.vendor ?? null, lastCostCents: b.lastCostCents ?? null,

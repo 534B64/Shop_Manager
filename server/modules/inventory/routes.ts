@@ -2,17 +2,35 @@
 // roll SKUs live in their own route files, registered from here.
 import type { FastifyInstance } from 'fastify';
 import { eq } from 'drizzle-orm';
-import { db, withTx } from '../../db/index.js';
+import { db, withTx, type Db } from '../../db/index.js';
 import { inventoryItems } from '../../db/schema/index.js';
 import { postTransaction } from './service.js';
 import { ledgerWrite, txnUser, isUniqueViolation, initialAvgCost, validateSkuColor, pagedOr400 } from './http.js';
 import { audit } from '../audit/index.js';
 import { itemPage } from './lists.js';
+import { generatedItemName, NAME_NEEDS_STRUCTURE } from './naming.js';
 import { ledgerRoutes } from './ledger.routes.js';
 import { inventoryReportRoutes } from './reports.routes.js';
 import { rollSkuRoutes } from './roll-skus.routes.js';
 
 const COUNT_IS_LEDGER = 'On-hand can\'t be edited directly — every quantity change is an inventory transaction. Use Receive stock, an adjustment (POST /api/inventory/:id/adjust), a transfer, or the cycle count.';
+
+/** Decide the name for an edit: a typed name is custom; '' or an already-generated item re-builds from the fields. */
+async function syncName(item: typeof inventoryItems.$inferSelect, b: { name?: string }, patch: Record<string, unknown>, tx: Db): Promise<string | null> {
+  const typed = b.name?.trim();
+  const custom = typed ? true : b.name === undefined ? item.nameIsCustom : false;
+  delete patch.name;
+  if (custom) {
+    if (typed) patch.name = typed;
+    patch.nameIsCustom = true;
+    return null;
+  }
+  const name = await generatedItemName({ ...item, ...patch }, tx);
+  if (!name) return NAME_NEEDS_STRUCTURE;
+  patch.name = name;
+  patch.nameIsCustom = false;
+  return null;
+}
 
 export async function inventoryRoutes(app: FastifyInstance) {
   // Unpaged (bare array, every active item) unless limit/offset is given —
@@ -27,9 +45,10 @@ export async function inventoryRoutes(app: FastifyInstance) {
   });
 
   app.post('/api/inventory', {
-    schema: { body: { type: 'object', required: ['name'], additionalProperties: false,
+    schema: { body: { type: 'object', additionalProperties: false,
       properties: {
-        name: { type: 'string', minLength: 1, maxLength: 120 },
+        // Optional (2026-09-29): blank = build it from category/color/size.
+        name: { type: 'string', maxLength: 120 },
         count: { type: 'integer', minimum: 0 },
         lowStockThreshold: { type: 'integer', minimum: 0 },
         vendor: { type: 'string', maxLength: 120 },
@@ -51,10 +70,16 @@ export async function inventoryRoutes(app: FastifyInstance) {
   }, async (req, reply) => {
     // A starting count is not written to the item — the item is created at 0
     // and the count arrives as an 'opening' transaction (ADR 0006).
-    const { count, ...fields } = req.body as { name: string; count?: number; lastCostCents?: number; purchaseToCountFactor?: number };
+    const { count, name: given, ...fields } = req.body as {
+      name?: string; count?: number; lastCostCents?: number; purchaseToCountFactor?: number;
+      categoryId?: number; color?: string; sizeText?: string; countUnit?: string;
+    };
     return ledgerWrite(reply, () => withTx(async (tx) => {
+      const custom = (given ?? '').trim();
+      const name = custom || await generatedItemName(fields, tx);
+      if (!name) return reply.code(400).send({ error: NAME_NEEDS_STRUCTURE });
       let [row] = await tx.insert(inventoryItems).values({
-        ...fields, avgCostCents: initialAvgCost(fields.lastCostCents, fields.purchaseToCountFactor),
+        ...fields, name, nameIsCustom: custom !== '', avgCostCents: initialAvgCost(fields.lastCostCents, fields.purchaseToCountFactor),
       }).returning();
       let opening = null;
       if (count) {
@@ -71,7 +96,8 @@ export async function inventoryRoutes(app: FastifyInstance) {
   app.put('/api/inventory/:id', {
     schema: { body: { type: 'object', additionalProperties: false, minProperties: 1,
       properties: {
-        name: { type: 'string', minLength: 1, maxLength: 120 },
+        // '' = go back to the generated name.
+        name: { type: 'string', maxLength: 120 },
         lowStockThreshold: { type: 'integer', minimum: 0 },
         vendor: { type: 'string', maxLength: 120 },
         lastCostCents: { type: 'integer', minimum: 0 },
@@ -91,7 +117,7 @@ export async function inventoryRoutes(app: FastifyInstance) {
       } } },
   }, async (req, reply) => {
     const id = Number((req.params as { id: string }).id);
-    const b = req.body as { color?: string | null; active?: boolean; count?: unknown; lastCostCents?: number };
+    const b = req.body as { name?: string; color?: string | null; active?: boolean; count?: unknown; lastCostCents?: number };
     if ('count' in b) return reply.code(400).send({ error: COUNT_IS_LEDGER });
     try {
       return await withTx(async (tx) => {
@@ -105,6 +131,8 @@ export async function inventoryRoutes(app: FastifyInstance) {
           if (colorError) return reply.code(400).send({ error: colorError });
         }
         const patch: Record<string, unknown> = { ...b };
+        const nameError = await syncName(item, b, patch, tx);
+        if (nameError) return reply.code(400).send({ error: nameError });
         // An item that has never had a costed receipt has no average yet —
         // seed it from a last cost entered by hand (same rule as migration 0015).
         if (item.avgCostCents === 0 && b.lastCostCents != null) {

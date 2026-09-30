@@ -39,7 +39,13 @@ export function itemFilters(q: Q): SQL[] {
   const search = str(q.q);
   if (search) {
     const p = searchPattern(search, q.match);
-    conds.push(or(...[I.name, I.color, I.vendor].map((c) => sql`${c} LIKE ${p} ESCAPE '\\'`))!);
+    // Name is usually generated from color/category/size, but a custom name may not
+    // say them — so search the structured fields (and category/material names) too.
+    const cols = [I.name, I.color, I.vendor, I.sizeText,
+      sql`cast(${I.nominalWidthIn} as text)`,
+      sql`(select name from categories where categories.id = ${I.categoryId})`,
+      sql`(select name from materials where materials.id = ${I.materialId})`];
+    conds.push(or(...cols.map((c) => sql`${c} LIKE ${p} ESCAPE '\\'`))!);
   }
   const ids = idList(q.ids);
   if (ids) conds.push(ids.length ? inArray(I.id, ids) : sql`0`);

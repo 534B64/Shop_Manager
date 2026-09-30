@@ -1,13 +1,15 @@
 import { useEffect, useState } from 'react';
 import { Button, Card, CardHeader, Select, Switch, TextField, showSnackbar } from '../../../components/m3';
 import { put } from '../../../lib/api';
-import type { Category, InventoryItem, Supplier } from '../../../lib/types';
+import { useQuery } from '../../../lib/query';
+import type { Category, InventoryItem, Material, Supplier } from '../../../lib/types';
+import { itemDisplayName } from '../../../../shared/itemName';
 import { suggestedMin } from '../../../../shared/reorder';
 import { factorOf, parseWhole } from '../logic';
 import { errorText } from '../../../lib/errorText';
 
 const fromItem = (i: InventoryItem) => ({
-  name: i.name, categoryId: i.categoryId != null ? String(i.categoryId) : '', sizeText: i.sizeText ?? '', color: i.color ?? '',
+  name: i.nameIsCustom === false ? '' : i.name, categoryId: i.categoryId != null ? String(i.categoryId) : '', sizeText: i.sizeText ?? '', color: i.color ?? '',
   supplierId: i.supplierId != null ? String(i.supplierId) : '', purchaseUnit: i.purchaseUnit ?? '', countUnit: i.countUnit ?? '',
   factor: String(factorOf(i)), min: String(i.lowStockThreshold), max: i.reorderMaxQty != null ? String(i.reorderMaxQty) : '',
   orderNote: i.orderNote ?? '', active: i.active,
@@ -33,13 +35,19 @@ export default function ItemFieldsCard({ item, onSaved, categories, suppliers, u
 
   const sup = suppliers.all.find((s) => String(s.id) === f.supplierId) ?? null;
   const autoMin = sup ? suggestedMin(item.avgDailyUse, sup.leadTimeDays, bufferDays) : null;
-  const unitOpts = [...new Set([...units, f.purchaseUnit, f.countUnit].filter(Boolean))];
+  const materials = useQuery<Material[]>(item.materialId != null ? '/api/materials?all=1&includeArchived=1' : null).data;
+  const autoName = itemDisplayName({
+    color: f.color, sizeText: f.sizeText, nominalWidthIn: item.nominalWidthIn, countUnit: f.countUnit,
+    categoryName: categories.all.find((c) => String(c.id) === f.categoryId)?.name,
+    materialName: materials?.find((m) => m.id === item.materialId)?.name,
+  });
+  const unitOpts =[...new Set([...units, f.purchaseUnit, f.countUnit].filter(Boolean))];
 
   async function save() {
     const factor = Number(f.factor);
     const min = parseWhole(f.min);
     const max = f.max.trim() ? parseWhole(f.max) : null;
-    if (!f.name.trim()) return setError('The item needs a name.');
+    if (!f.name.trim() && !autoName) return setError('Give the item a category, color or size — or type a custom name.');
     if (!(factor > 0)) return setError('The factor must be more than 0 (count units in one purchase unit).');
     if (min == null || (f.max.trim() && max == null)) return setError('Min and Max must be whole numbers (0 or more).');
     setSaving(true); setError(null);
@@ -60,7 +68,6 @@ export default function ItemFieldsCard({ item, onSaved, categories, suppliers, u
     <Card>
       <CardHeader title="Details" subtitle="On hand isn’t edited here — stock changes go through receiving, adjustments, transfers and cycle counts, so every change has a record." />
       <div className="grid gap-3 sm:grid-cols-2">
-        <TextField className="sm:col-span-2" label="Name" value={f.name} onChange={(e) => set({ name: e.target.value })} />
         <Select label="Category" value={f.categoryId} onChange={(e) => set({ categoryId: e.target.value })}>
           <option value="">None</option>
           {withCurrent(categories.live, categories.all, f.categoryId).map((c) => <option key={c.id} value={c.id}>{c.name}{c.archivedAt ? ' (archived)' : ''}</option>)}
@@ -74,6 +81,9 @@ export default function ItemFieldsCard({ item, onSaved, categories, suppliers, u
         <TextField label="Size" value={f.sizeText} onChange={(e) => set({ sizeText: e.target.value })} />
         <TextField label="Color" value={f.color} onChange={(e) => set({ color: e.target.value })}
           supportingText={item.materialId != null ? 'Must be on the material’s color list' : undefined} />
+        <TextField className="sm:col-span-2" label="Custom name (optional)" value={f.name} maxLength={120}
+          onChange={(e) => set({ name: e.target.value })}
+          supportingText={autoName ? `Leave blank to use: ${autoName}` : 'Leave blank to build the name from category, color and size'} />
         <Select label="Bought as" value={f.purchaseUnit} onChange={(e) => set({ purchaseUnit: e.target.value })}>
           <option value="">—</option>
           {unitOpts.map((u) => <option key={u} value={u}>{u}</option>)}

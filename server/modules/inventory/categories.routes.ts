@@ -4,6 +4,7 @@ import { db, withTx } from '../../db/index.js';
 import { categories, categorySizes } from '../../db/schema/index.js';
 import { requireRole } from '../auth/index.js';
 import { audit } from '../audit/index.js';
+import { refreshGeneratedNames } from './naming.js';
 
 // ---- Smart categories (Phase 10, Slice 2) ----
 // ORTHOGONAL to the roll-SKU/estimator path: categories are a new
@@ -66,7 +67,10 @@ export async function categoryRoutes(app: FastifyInstance) {
       const [before] = await tx.select().from(categories).where(eq(categories.id, id));
       if (!before) return reply.code(404).send({ error: 'Category not found' });
       const [row] = await tx.update(categories).set(req.body as object).where(eq(categories.id, id)).returning();
-      await audit(tx, req, { action: 'category.update', entity: 'category', entityId: id, before, after: row });
+      // A rename flows into generated item names (custom names stay).
+      const renamed = row.name !== before.name ? await refreshGeneratedNames(tx, { categoryId: id }) : 0;
+      await audit(tx, req, { action: 'category.update', entity: 'category', entityId: id, before,
+        after: renamed ? { ...row, itemNamesRefreshed: renamed } : row });
       return row;
     });
   });

@@ -134,6 +134,13 @@
       "when": 1790800000000,
       "tag": "0018_tax_exempt_sales",
       "breakpoints": true
+    },
+    {
+      "idx": 19,
+      "version": "6",
+      "when": 1790900000000,
+      "tag": "0019_item_name_is_custom",
+      "breakpoints": true
     }
   ]
 }

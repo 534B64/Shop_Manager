@@ -4,6 +4,7 @@ import { post } from '../../../lib/api';
 import { useQuery } from '../../../lib/query';
 import type { Category, CategorySize, InventoryItem, Supplier } from '../../../lib/types';
 import { parseWhole } from '../logic';
+import { itemDisplayName } from '../../../../shared/itemName';
 import { errorText } from '../../../lib/errorText';
 
 const BLANK = { name: '', categoryId: '', unit: '', color: '', size: '', sizeCustom: '', count: '', min: '', supplierId: '', orderNote: '' };
@@ -19,6 +20,8 @@ export default function NewItemDialog({ open, onClose, onCreated, categories, su
   const cat = categories.find((c) => c.id === Number(f.categoryId));
   const sizes = useQuery<CategorySize[]>(f.categoryId ? `/api/categories/${f.categoryId}/sizes` : null).data ?? [];
   const set = (patch: Partial<typeof BLANK>) => setF((x) => ({ ...x, ...patch }));
+  const sizeText = (f.size === '__custom__' || sizes.length === 0 ? f.sizeCustom : f.size).trim();
+  const autoName = itemDisplayName({ color: f.color, categoryName: cat?.name, sizeText, countUnit: f.unit });
 
   // A category pre-fills its unit and (if none picked yet) its supplier.
   const pickCategory = (id: string) => {
@@ -31,15 +34,14 @@ export default function NewItemDialog({ open, onClose, onCreated, categories, su
   const close = () => { if (!saving) { setF(BLANK); setError(null); onClose(); } };
   async function save() {
     const name = f.name.trim();
-    if (!name) return setError('Give the item a name.');
+    if (!name && !autoName) return setError('Pick a category, color or size — or type a custom name.');
     const count = f.count.trim() ? parseWhole(f.count) : 0;
     const min = f.min.trim() ? parseWhole(f.min) : 0;
     if (count == null || min == null) return setError('On hand and Min must be whole numbers (0 or more).');
-    const sizeText = (f.size === '__custom__' || sizes.length === 0 ? f.sizeCustom : f.size).trim();
     setSaving(true); setError(null);
     try {
       const item = await post<InventoryItem>('/api/inventory', {
-        name, count, lowStockThreshold: min,
+        ...(name ? { name } : {}), count, lowStockThreshold: min,
         ...(f.supplierId ? { supplierId: Number(f.supplierId) } : {}),
         ...(f.categoryId ? { categoryId: Number(f.categoryId) } : {}),
         ...(f.unit ? { countUnit: f.unit, purchaseUnit: f.unit } : {}),
@@ -60,9 +62,7 @@ export default function NewItemDialog({ open, onClose, onCreated, categories, su
         <Button variant="text" onClick={save} disabled={saving}>{saving ? 'Adding…' : 'Add item'}</Button>
       </>}>
       <div className="grid gap-3 sm:grid-cols-2">
-        <TextField className="sm:col-span-2" label="Name" value={f.name} required data-autofocus
-          onChange={(e) => set({ name: e.target.value })} placeholder='Vinyl roll 24" white' />
-        <Select label="Category" value={f.categoryId} onChange={(e) => pickCategory(e.target.value)}>
+        <Select label="Category" value={f.categoryId} onChange={(e) => pickCategory(e.target.value)} data-autofocus>
           <option value="">None</option>
           {categories.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
         </Select>
@@ -88,6 +88,9 @@ export default function NewItemDialog({ open, onClose, onCreated, categories, su
           <option value="">—</option>
           {suppliers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
         </Select>
+        <TextField className="sm:col-span-2" label="Custom name (optional)" value={f.name} maxLength={120}
+          onChange={(e) => set({ name: e.target.value })}
+          supportingText={autoName ? `Leave blank to use: ${autoName}` : 'Leave blank to build the name from category, color and size'} />
         <TextField className="sm:col-span-2" label="Order note (optional)" value={f.orderNote}
           onChange={(e) => set({ orderNote: e.target.value })} />
       </div>

@@ -35,6 +35,8 @@ export interface Payment {
 export interface InventoryItem {
   id: number; name: string; count: number; lowStockThreshold: number; active: boolean;
   vendor: string | null; lastCostCents: number | null;
+  // false = `name` was generated from color/category/size (shared/itemName.ts).
+  nameIsCustom?: boolean;
   // Roll-SKU fields (Phase 8) — set only when this item is a vinyl roll tracked
   // by material + color + nominal width. Null on ordinary stock items.
   materialId?: number | null; color?: string | null; nominalWidthIn?: number | null;

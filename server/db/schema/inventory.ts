@@ -73,6 +73,10 @@ export const categoryFields = sqliteTable('category_fields', {
 export const inventoryItems = sqliteTable('inventory_items', {
   id: integer('id').primaryKey({ autoIncrement: true }),
   name: text('name').notNull(),
+  // false = `name` is generated from color/category/size (shared/itemName.ts)
+  // and kept in sync when those change; true = the owner typed it. Migration
+  // 0019 backfilled existing rows as custom.
+  nameIsCustom: integer('name_is_custom', { mode: 'boolean' }).notNull().default(true),
   // Total on-hand across locations, in count units — a CACHE of the ledger
   // sum (Phase 2, ADR 0006). The AFTER INSERT trigger on
   // inventory_adjustments maintains it; a guard trigger rejects any other

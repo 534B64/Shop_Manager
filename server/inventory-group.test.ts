@@ -55,8 +55,8 @@ describe('group=', () => {
   it('material: by material name, then the sort, with "Other" last', async () => {
     const r = await list('group=material');
     expect(r.rows.map((x) => [x.groupLabel, x.name])).toEqual([
-      ['Alpha vinyl', 'Alpha vinyl · Blue · 48in'], ['Alpha vinyl', 'Alpha vinyl · red · 12in'],
-      ['Zeta vinyl', 'Zeta vinyl · Red · 24in'],
+      ['Alpha vinyl', 'Blue Alpha vinyl 48″'], ['Alpha vinyl', 'red Alpha vinyl 12″'],
+      ['Zeta vinyl', 'Red Zeta vinyl 24″'],
       ['Other / Consumables', 'Squeegee'], ['Other / Consumables', 'Tee M'],
     ]);
     expect(r.rows[3].groupKey).toBe('other');
@@ -73,7 +73,7 @@ describe('group=', () => {
   });
   it('the chosen sort applies inside each group; no group = no group fields', async () => {
     expect(await names('group=material&sort=name&dir=desc')).toEqual([
-      'Alpha vinyl · red · 12in', 'Alpha vinyl · Blue · 48in', 'Zeta vinyl · Red · 24in', 'Tee M', 'Squeegee']);
+      'red Alpha vinyl 12″', 'Blue Alpha vinyl 48″', 'Red Zeta vinyl 24″', 'Tee M', 'Squeegee']);
     const plain = await list('group=bogus');
     expect(plain.groups).toBeUndefined();
     expect(plain.rows[0]).not.toHaveProperty('groupKey');
@@ -82,12 +82,12 @@ describe('group=', () => {
 
 describe('restored sorts', () => {
   it('size: narrowest first, items without a width last', async () => {
-    expect((await names('sort=size')).slice(0, 3)).toEqual(['Alpha vinyl · red · 12in', 'Zeta vinyl · Red · 24in', 'Alpha vinyl · Blue · 48in']);
+    expect((await names('sort=size')).slice(0, 3)).toEqual(['red Alpha vinyl 12″', 'Red Zeta vinyl 24″', 'Blue Alpha vinyl 48″']);
   });
   it('color: A–Z, no color last', async () => {
-    expect(await names('sort=color')).toEqual(['Alpha vinyl · Blue · 48in', 'Alpha vinyl · red · 12in', 'Zeta vinyl · Red · 24in', 'Squeegee', 'Tee M']);
+    expect(await names('sort=color')).toEqual(['Blue Alpha vinyl 48″', 'red Alpha vinyl 12″', 'Red Zeta vinyl 24″', 'Squeegee', 'Tee M']);
   });
   it('low: at/below Min first, then by name', async () => {
-    expect(await names('sort=low')).toEqual(['Alpha vinyl · Blue · 48in', 'Tee M', 'Alpha vinyl · red · 12in', 'Squeegee', 'Zeta vinyl · Red · 24in']);
+    expect(await names('sort=low')).toEqual(['Blue Alpha vinyl 48″', 'Tee M', 'red Alpha vinyl 12″', 'Red Zeta vinyl 24″', 'Squeegee']);
   });
 });
