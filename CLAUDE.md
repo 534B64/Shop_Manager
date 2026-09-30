@@ -1,6 +1,6 @@
 # Shop Manager — Project Instructions
 
-ERP/POS for Decals Plus, a 1–5 person custom graphics shop.
+ERP/POS for small (1–5 person) custom graphics shops; first built for Decals Plus. The company name is a setting (see Conventions) — never hardcode one.
 
 ## Session start — read first
 At the start of a session, before doing anything, read these to load current state:
@@ -80,6 +80,8 @@ The v1 win condition: **anyone in the shop can quote a job consistently.** When 
 - Seed script with realistic shop data (materials, sample jobs) for dev.
 - **Demo vs production data (ADR 0008)**: every database may carry `settings.dataset` = `demo` | `production` (never relabeled). Demo data lives in `data/demo.db` (`npm run db:seed` default; `3-Start-Dev.bat` runs on it). Any script that writes fake data must refuse a production-labeled DB (and seeds also refuse an unlabeled `dp-erp.db` or unlabeled DB with data) — reuse `server/db/dataset.ts`. A real shop DB is only started with `npm run db:init-prod`, which has no override flag.
 - **Backups (ADR 0008)**: `npm run db:backup` (`VACUUM INTO` + verify + rotate; the server also runs it daily at `BACKUP_HOUR`) and `npm run db:restore -- <file>` (refuses while the server's heartbeat lock is fresh; sets the current DB aside as `*.pre-restore-*.db`, never deletes it). Never treat a raw copy of the live `.db`/`-wal` as a backup. Tests and drills use temp dirs only — never `data/` or a real `.db`. Procedures: `docs/BACKUP.md`, `docs/PRODUCTION-SETUP.md`.
+- **Item names are optional (2026-09-29).** An inventory item's name is built from its structured fields by `itemDisplayName` in `shared/itemName.ts` (`Red 651 15″`, `White Reflective 30″`; roll SKUs use the material name) unless the owner typed a **custom name**. The server stores the generated name in `inventory_items.name` (so search, reports, CSV and POS lines keep working) and re-syncs it when category/color/size/unit change or a category is renamed; `name_is_custom` says which case applies (migration 0019; existing rows = custom). Never build item names by hand in UI code — call `itemDisplayName`.
+- **Branding comes from the `companyName` setting (2026-09-29).** The product is always "Shop Manager"; the company shows next to it (`brandName` / `printHeading` / `brandInitials` in `shared/branding.ts`, `useCompanyName()` on the client). Never hardcode a company name in code, scripts or UI — the original shop's name lives only in history, demo seed data, and as the one-time default for an existing install that has data (`server/modules/settings/company.ts`).
 - Money as integer cents. Dates in ISO 8601, displayed local.
 - Tests for the estimator math and status transitions at minimum.
 - **No hard deletes** (ADR 0005). "Delete" archives (`archived_at`/`archived_by`, or `deleted_at` on jobs/job_items); list endpoints hide archived rows unless `?includeArchived=1`, and every archive has a `POST …/unarchive` with the same permission. SQLite triggers reject `DELETE` on the protected tables and edits to payment amounts / ledger rows — don't work around them.

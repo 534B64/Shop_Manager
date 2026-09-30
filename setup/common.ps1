@@ -4,7 +4,8 @@ $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'   # the progress bar makes downloads very slow in PowerShell 5.1
 try { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12 } catch { }
 
-$script:AppId = 'decals-plus-shop-manager'
+$script:AppId = 'shop-manager'
+$script:AppIdsAccepted = @('shop-manager', 'decals-plus-shop-manager')   # older builds used the second name
 $script:NoInternetMsg = 'Could not download Node.js. Check the internet connection and run Setup.bat again.'
 
 $script:FwWebRule = 'Shop Manager web page (TCP 80, 3000)'
@@ -78,7 +79,7 @@ function Write-ShopEnv([string]$Root, [hashtable]$Values) {
   [IO.File]::WriteAllLines($file, $lines, (New-Object Text.UTF8Encoding($false)))
 }
 
-# "Decals Plus" -> "decalsplus". Lowercase letters, digits and hyphens only.
+# "Acme Signs" -> "acmesigns". Lowercase letters, digits and hyphens only.
 function ConvertTo-Hostname([string]$Text) {
   $s = ($Text.ToLower() -replace '[^a-z0-9]', '')
   if ($s.Length -gt 40) { $s = $s.Substring(0, 40) }
@@ -163,7 +164,7 @@ function Get-ShopHealth([int[]]$Ports) {
   foreach ($p in $Ports) {
     try {
       $h = Invoke-RestMethod -UseBasicParsing -TimeoutSec 2 -Uri "http://127.0.0.1:$p/api/health"
-      if ($h.app -eq $script:AppId) {
+      if ($script:AppIdsAccepted -contains $h.app) {
         # Older servers do not report their port, so remember the one we asked.
         $h | Add-Member -NotePropertyName probedPort -NotePropertyValue $p -Force
         return $h

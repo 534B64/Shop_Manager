@@ -85,6 +85,10 @@ used in code, docs, or conversation, it means exactly this.
 
 - **Inventory item** — something the shop stocks and counts, with a low-stock
   threshold. No per-job consumption, deliberately.
+- **Item name / Display name** — what an inventory item is called everywhere.
+  Normally built for you from its category, color and size ("Red 651 15″");
+  the owner may type a **custom name** instead. The free-text order note is
+  separate.
 - **Inventory transaction** — one recorded change to how many of an item are
   on the shelf: a receipt, sale, return, adjustment, transfer, count posting,
   production use, or opening balance. Says who, when, why, and what document
@@ -207,6 +211,11 @@ used in code, docs, or conversation, it means exactly this.
   who asked and who approved.
 
 ### Records & history
+
+- **Company** — the business that owns this copy of the app, named by an admin
+  in Settings. Shown next to "Shop Manager" (the product) on the sign-in
+  screen, the top bar, the browser tab and printed sheets; when no company is
+  named, only "Shop Manager" shows.
 
 - **Archive** — what "delete" means everywhere in the app: the record is hidden
   from lists and pickers but kept, still shows wherever older records point to

@@ -2,9 +2,11 @@ import { useEffect, useState } from 'react';
 import { get, post } from '../lib/api';
 import { setSession, type SessionUser } from '../lib/session';
 import { applyPrefs, DEFAULT_PREFS, type Prefs } from '../lib/theme';
+import { setCompanyName } from '../lib/branding';
+import { brandName } from '../../shared/branding';
 
 interface Account { id: number; name: string; }
-interface Status { needsSetup: boolean; accounts: Account[] }
+interface Status { needsSetup: boolean; accounts: Account[]; companyName?: string }
 interface LoginResult { token: string; user: SessionUser & { prefs: Prefs | null } }
 
 export default function SignIn({ onDone }: { onDone: () => void }) {
@@ -14,6 +16,7 @@ export default function SignIn({ onDone }: { onDone: () => void }) {
   const [error, setError] = useState('');
   // First-run setup (no admin can sign in yet).
   const [setupName, setSetupName] = useState('');
+  const [setupCompany, setSetupCompany] = useState('');
   const [setupPin2, setSetupPin2] = useState('');
 
   useEffect(() => { get<Status>('/api/auth/status').then(setStatus).catch(() => setError('Server unreachable — check the server PC/NAS.')); }, []);
@@ -36,7 +39,11 @@ export default function SignIn({ onDone }: { onDone: () => void }) {
     if (!setupName.trim()) return setError('Enter your name.');
     if (!/^\d{4,12}$/.test(pin)) return setError('PIN must be 4–12 digits.');
     if (pin !== setupPin2) return setError('PINs do not match.');
-    try { finish(await post<LoginResult>('/api/auth/setup', { name: setupName.trim(), pin })); }
+    const company = setupCompany.trim();
+    try {
+      finish(await post<LoginResult>('/api/auth/setup', { name: setupName.trim(), pin, ...(company ? { companyName: company } : {}) }));
+      if (company && !status?.companyName) setCompanyName(company);
+    }
     catch (e) { setError(e instanceof Error ? e.message : 'Setup failed'); }
   }
 
@@ -45,11 +52,15 @@ export default function SignIn({ onDone }: { onDone: () => void }) {
   return (
     <div className="fixed inset-0 z-50 bg-surface flex items-center justify-center app-chrome p-4">
       <div className="bg-surface-container-low text-on-surface shadow-elevation-1 rounded-shape-large p-8 w-full max-w-md">
-        <h1 className="text-headline-small mb-1">Decals Plus — Shop Manager</h1>
+        <h1 className="text-headline-small mb-1">{brandName(status?.companyName)}</h1>
         {status?.needsSetup ? (
           <>
             <p className="text-body-large text-on-surface-variant mb-5">First-time setup: create the owner (admin) account. Everyone else is added in Settings → Accounts.</p>
             <div className="space-y-2">
+              {!status.companyName && (
+                <input className="w-full px-3 py-3 bg-surface-container-highest text-on-surface border border-outline rounded-shape-extra-small text-body-large"
+                  placeholder="Company name (optional)" maxLength={80} value={setupCompany} onChange={(e) => setSetupCompany(e.target.value)} />
+              )}
               <input autoFocus className="w-full px-3 py-3 bg-surface-container-highest text-on-surface border border-outline rounded-shape-extra-small text-body-large"
                 placeholder="Your name" value={setupName} onChange={(e) => setSetupName(e.target.value)} />
               <div className="flex gap-2">

@@ -2,6 +2,8 @@ import { useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { STATUS_LABELS } from '../../../shared/domain';
 import { formatCents, formatDate } from '../../lib/format';
+import { useCompanyName } from '../../lib/branding';
+import { printHeading } from '../../../shared/branding';
 import { jobsTotal, type CustomerDetail } from './logic';
 
 const cell = 'border border-outline px-2 py-1 text-left';
@@ -9,13 +11,14 @@ const cell = 'border border-outline px-2 py-1 text-left';
 /** Printable order history ("Save as PDF" from the print dialog). Only the
  *  .print-sheet shows when printing (src/index.css). */
 export default function PrintHistory({ customer: c, onDone }: { customer: CustomerDetail; onDone: () => void }) {
+  const company = useCompanyName();
   useEffect(() => {
     const t = setTimeout(() => { window.print(); onDone(); }, 60);
     return () => clearTimeout(t);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
   return createPortal(
     <div className="print-sheet">
-      <h1 className="text-headline-small">Decals Plus — Order History</h1>
+      <h1 className="text-headline-small">{printHeading(company)} — Order History</h1>
       <p className="text-body-medium mb-3">{c.name}{c.phone ? ` · ${c.phone}` : ''} · printed {new Date().toLocaleDateString()}</p>
       <table className="w-full border-collapse text-body-small">
         <thead>

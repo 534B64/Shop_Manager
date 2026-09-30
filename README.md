@@ -1,6 +1,6 @@
 # Shop Manager
 
-Shop Manager runs a small custom-graphics shop: quotes and job tracking, the counter register, payments and the cash drawer, inventory and reordering, and customers. It was built for Decals Plus and works for any similar 1-5 person shop.
+Shop Manager runs a small custom-graphics shop: quotes and job tracking, the counter register, payments and the cash drawer, inventory and reordering, and customers. It was first built for Decals Plus and works for any similar 1-5 person shop. Your company name is a setting (Settings, Shop, Company): Setup asks for it, and you can change it any time.
 
 It runs on **one Windows PC in your shop** (the "shop PC"). Everyone else opens it in a web browser on the shop wifi - nothing to install on the other PCs or phones. Your data stays in your shop: one database file on the shop PC, backed up every night.
 

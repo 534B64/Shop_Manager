@@ -2,11 +2,14 @@
 import { createPortal } from 'react-dom';
 import { formatCents, formatDate } from '../../../lib/format';
 import { JOB_TYPE_LABELS } from '../../../../shared/domain';
+import { printHeading } from '../../../../shared/branding';
+import { useCompanyName } from '../../../lib/branding';
 import { jobTotal, type JobDetail } from '../types';
 
 const cell = 'border border-outline-variant px-2.5 py-1.5 align-top';
 
 export default function PrintSheet({ job }: { job: JobDetail }) {
+  const company = useCompanyName();
   const rows: [string, string][] = [
     ['Customer', `${job.customerName ?? '—'}${job.customerPhone ? ` · ${job.customerPhone}` : ''}`],
     ['Job', job.title],
@@ -21,7 +24,7 @@ export default function PrintSheet({ job }: { job: JobDetail }) {
   ];
   return createPortal(
     <div className="print-sheet" aria-hidden>
-      <h1 className="text-headline-small">Decals Plus</h1>
+      <h1 className="text-headline-small">{printHeading(company)}</h1>
       <p className="mb-4">{job.po ?? `#${job.id}`} — {formatDate(job.createdAt)}{job.createdBy ? ` — by ${job.createdBy}` : ''}
         {job.invoice ? ` — Invoice ${job.invoice.number}` : ''}</p>
       <table className="w-full border-collapse text-body-medium">

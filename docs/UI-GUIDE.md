@@ -72,6 +72,11 @@ const items = usePaged<Item>('/api/inventory', { q: search, low: lowOnly, sort: 
 Changing the params object (search, filters, sort) goes back to page 1. Mutations still use `post/put/del`, then
 `reload()`; show the result with `showSnackbar`.
 
+### Names and branding
+
+- Item names: never assemble them by hand — call `itemDisplayName` from `shared/itemName.ts` (color, category or material, size, unit). Forms show the name field as "Custom name (optional)" with the hint "Leave blank to use: …".
+- Company branding: use the company setting, never a hardcoded name. `useCompanyName()` (`src/lib/branding.ts`) plus `brandName` / `printHeading` / `brandInitials` (`shared/branding.ts`) give "Acme · Shop Manager", or just "Shop Manager" when no company is set.
+
 ### Server paging contract
 
 Opt-in per request — without `limit`/`offset` the old response (bare array) is unchanged.

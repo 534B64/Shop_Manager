@@ -1,4 +1,4 @@
-# Deploying Decals Plus Shop Manager
+# Deploying Shop Manager
 
 Two ways to run it: on **a Windows PC** (the simple way, no Docker; first section) or on **a NAS with Docker** (the rest of this page).
 

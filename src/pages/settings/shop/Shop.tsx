@@ -1,9 +1,10 @@
-// /settings/shop (admin) — tax, level discounts, POS refund approval limit,
+// /settings/shop (admin) — company name, tax, level discounts, POS refund approval limit,
 // inventory knobs, and which dataset this server runs on.
 import SettingsFrame from '../SettingsFrame';
 import SettingsCard from './SettingsCard';
 import DataCard from './DataCard';
 import AddressCard from './AddressCard';
+import CompanyCard from './CompanyCard';
 
 const num = (v: unknown) => (typeof v === 'number' ? v : Number(v) || 0);
 
@@ -12,6 +13,7 @@ export default function Shop() {
     <SettingsFrame title="Shop" min="admin"
       subtitle="Changes apply to new quotes and sales right away; saved invoices never change.">
       <div className="grid gap-4 lg:grid-cols-2 items-start max-w-5xl">
+        <CompanyCard />
         <SettingsCard title="Sales tax" url="/api/settings/tax"
           subtitle="Applied to taxable lines at the moment of sale."
           fields={[{ key: 'ratePct', label: 'Tax rate', suffix: '%', min: 0, max: 30 }]}

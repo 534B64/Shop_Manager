@@ -59,7 +59,7 @@ try {
   # ---- 5. Shop name and address ----
   Step 5 'Your shop name and its address'
   $cfg = Read-ShopEnv $root
-  $name = if ($ShopName) { $ShopName } else { Ask-Text '  What is your shop called? (for example: Decals Plus)' $cfg['SHOP_NAME'] }
+  $name = if ($ShopName) { $ShopName } else { Ask-Text '  What is your shop called? (for example: Acme Signs)' $cfg['SHOP_NAME'] }
   if (-not $name) { $name = 'Shop' }
   $suggest = if ($cfg['SHOP_HOSTNAME']) { $cfg['SHOP_HOSTNAME'] } else { ConvertTo-Hostname $name }
   $host_ = if ($Hostname) { $Hostname } else { Ask-Text "  Address other devices will type (letters and numbers only)" $suggest }

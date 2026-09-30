@@ -1,4 +1,4 @@
-' Runs Decals Plus Shop Manager invisibly (production mode: http://<shopname>.local, or port 3000 if port 80 is busy).
+' Runs Shop Manager invisibly (production mode: http://<shopname>.local, or port 3000 if port 80 is busy).
 ' Starting means RESTARTING: build the latest client, stop the copy that is already
 ' running from this folder, then start a fresh one - so an old server can never keep running
 ' behind a new build. Server output goes to data\logs\server-<date>.log.
