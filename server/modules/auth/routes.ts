@@ -7,6 +7,8 @@ import {
   activeAdminCount, hashPin,
 } from './service.js';
 import { audit } from '../audit/index.js';
+import { getCompanyName, setSetting, COMPANY_KEY } from '../settings/index.js';
+import { cleanCompanyName } from '../../../shared/branding.js';
 import { requireRole } from './service.js';
 import { listApprovals, parseApprovalQuery } from './approvals.js';
 
@@ -20,6 +22,8 @@ export async function authRoutes(app: FastifyInstance) {
     const rows = await db.select().from(users);
     return {
       needsSetup: (await activeAdminCount()) === 0,
+      // Company name only (branding on the sign-in screen) — nothing sensitive.
+      companyName: await getCompanyName(),
       accounts: rows.filter((u) => u.active && u.pinHash).map((u) => ({ id: u.id, name: u.name })),
     };
   });
@@ -31,12 +35,20 @@ export async function authRoutes(app: FastifyInstance) {
       properties: {
         name: { type: 'string', minLength: 1, maxLength: 60 },
         pin: { type: 'string', pattern: PIN_PATTERN },
+        // First run may also name the company (only while none is set).
+        companyName: { type: 'string', maxLength: 200 },
       } } },
   }, async (req, reply) => {
-    const { name, pin } = req.body as { name: string; pin: string };
+    const { name, pin, companyName } = req.body as { name: string; pin: string; companyName?: string };
     const pinHash = await hashPin(pin);
     const u = await withTx(async (tx) => {
       if ((await activeAdminCount(tx)) > 0) return null;
+      const company = cleanCompanyName(companyName);
+      if (company && !(await getCompanyName(tx))) {
+        await setSetting(COMPANY_KEY, company, tx);
+        await audit(tx, req, { action: 'settings.update', entity: 'setting', entityId: COMPANY_KEY,
+          before: { companyName: '' }, after: { companyName: company } });
+      }
       const [existing] = await tx.select().from(users).where(eq(users.name, name.trim()));
       const [row] = existing
         ? await tx.update(users).set({ role: 'admin', pinHash, password: null, active: true }).where(eq(users.id, existing.id)).returning()

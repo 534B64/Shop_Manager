@@ -2,6 +2,8 @@ import type { FastifyInstance } from 'fastify';
 import { withTx, type Db } from '../../db/index.js';
 import { DEFAULT_UNIT_TYPES } from '../../../shared/domain.js';
 import { taxRatePct, getSetting, setSetting, DEFAULT_POS_SETTINGS } from './service.js';
+import { cleanCompanyName } from '../../../shared/branding.js';
+import { getCompanyName, COMPANY_KEY } from './company.js';
 import { requireRole } from '../auth/index.js';
 import { audit } from '../audit/index.js';
 
@@ -41,6 +43,25 @@ export async function settingsRoutes(app: FastifyInstance) {
         before: { ratePct: before }, after: { ratePct } });
     });
     return { ratePct };
+  });
+
+  // Company name (2026-09-29) — shown next to "Shop Manager" everywhere. Anyone signed in
+  // can read it (the sign-in screen gets it from /api/auth/status); only an admin changes it.
+  // Blank is allowed: the app then shows just "Shop Manager".
+  app.get('/api/settings/company', async () => ({ companyName: await getCompanyName() }));
+  app.put('/api/settings/company', {
+    schema: { body: { type: 'object', required: ['companyName'], additionalProperties: false,
+      properties: { companyName: { type: 'string', maxLength: 200 } } } },
+  }, async (req, reply) => {
+    if (!requireRole(req, reply, 'admin')) return reply;
+    const companyName = cleanCompanyName((req.body as { companyName: string }).companyName);
+    await withTx(async (tx) => {
+      const before = await getCompanyName(tx);
+      await setSetting(COMPANY_KEY, companyName, tx);
+      await audit(tx, req, { action: 'settings.update', entity: 'setting', entityId: COMPANY_KEY,
+        before: { companyName: before }, after: { companyName } });
+    });
+    return { companyName };
   });
 
   // /api/settings/pricing (complexity max + step) was removed 2026-07-02 along

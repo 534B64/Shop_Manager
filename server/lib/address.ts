@@ -29,6 +29,15 @@ export function readShopHostname(env: NodeJS.ProcessEnv, dbPath: string): string
   } catch { return null; }
 }
 
+/** The shop name Setup saved (SHOP_NAME in env or data/shop.env), or null. */
+export function readShopName(env: NodeJS.ProcessEnv, dbPath: string): string | null {
+  const fromEnv = env.SHOP_NAME?.trim();
+  if (fromEnv) return fromEnv;
+  try {
+    return parseEnvFile(fs.readFileSync(shopEnvPath(dbPath), 'utf8')).SHOP_NAME?.trim() || null;
+  } catch { return null; }
+}
+
 /** `http://name.local` and `http://1.2.3.4` (":port" only when it is not 80). */
 export function addressList(hostname: string | null, port: number, ips: string[]): string[] {
   const suffix = port === 80 ? '' : `:${port}`;

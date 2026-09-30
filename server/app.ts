@@ -42,7 +42,8 @@ export async function buildApp(opts: { logger?: boolean } = {}): Promise<Fastify
   const where = reachableAddresses(DB_PATH);
   return {
     ok: true,
-    app: 'decals-plus-shop-manager',
+    // Older builds reported 'decals-plus-shop-manager'; the setup scripts accept both.
+    app: 'shop-manager',
     version: BUILD_INFO.version,
     build: BUILD_INFO.build,
     time: new Date().toISOString(),

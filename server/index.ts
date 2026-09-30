@@ -4,11 +4,11 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { buildApp } from './app.js';
 import { DB_PATH } from './db/index.js';
-import { getSetting } from './modules/settings/index.js';
+import { getSetting, ensureCompanyName } from './modules/settings/index.js';
 import { holdServerLock } from './db/server-lock.js';
 import { backupConfigFromEnv, scheduleDailyBackups } from './db/backup.js';
 import { startMdns, lanInterfaces, MDNS_PORT } from './lib/mdns.js';
-import { readShopHostname, addressList, setListenPort, chooseListenPort } from './lib/address.js';
+import { readShopHostname, readShopName, addressList, setListenPort, chooseListenPort } from './lib/address.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const app = await buildApp({ logger: true });
@@ -19,6 +19,9 @@ const label = dataset === 'production' ? 'PRODUCTION'
   : dataset === 'demo' ? 'DEMO (practice data, not real)'
   : 'UNLABELED (for a real shop database see docs/PRODUCTION-SETUP.md)';
 app.log.info(`database ${path.resolve(DB_PATH)} | dataset: ${label}`);
+
+// The company name defaults once from Setup's SHOP_NAME (data/shop.env); see settings/company.ts.
+await ensureCompanyName(readShopName(process.env, DB_PATH));
 
 // Heartbeat lock: db:restore refuses while it is fresh.
 const lock = holdServerLock(DB_PATH);
